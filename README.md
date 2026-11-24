@@ -1,4 +1,7 @@
-# DebInstaller
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/wordmark-dark.png">
+  <img src="docs/brand/wordmark-light.png" alt="DebInstaller — convert .deb to native Arch package" width="460">
+</picture>
 
 Install `.deb` packages on Arch Linux — safely, and with native package management.
 

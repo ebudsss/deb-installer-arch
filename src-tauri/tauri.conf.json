@@ -26,19 +26,29 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "appimage"],
+    "targets": [
+      "deb",
+      "appimage"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
-      "icons/icon.png"
+      "icons/256x256.png",
+      "icons/512x512.png",
+      "icons/icon.png",
+      "icons/icon.ico"
     ],
     "category": "Utility",
-    "shortDescription": "Pasang paket .deb di Arch Linux",
-    "longDescription": "Mengonversi paket .deb menjadi paket pacman native, memetakan dependensi Debian ke Arch, dan menampilkan script maintainer sebelum dipasang.",
+    "shortDescription": "Install .deb packages on Arch Linux as native pacman packages",
+    "longDescription": "Converts .deb packages into native pacman packages, maps Debian dependencies to Arch, and shows maintainer scripts before anything is installed.",
     "linux": {
       "deb": {
-        "depends": ["webkit2gtk-4.1", "gtk3", "polkit"]
+        "depends": [
+          "webkit2gtk-4.1",
+          "gtk3",
+          "polkit"
+        ]
       }
     }
   }

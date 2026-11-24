@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { api, type Analysis, type Settings } from "./lib/api";
 import { I18nContext, translate, type StringKey } from "./lib/i18n";
+import brandSymbol from "./assets/brand-symbol.png";
 import { ToastProvider, useToast } from "./components/toast";
 import { IconBox, IconHome, IconSettings, IconShield } from "./components/icons";
 import { Home } from "./pages/Home";
@@ -105,12 +106,17 @@ function Shell() {
       <div className="flex h-full flex-col bg-[var(--bg)]">
         <header className="sticky top-0 z-30 flex h-[52px] shrink-0 items-center justify-between gap-4 border-b border-[var(--border)] bg-[var(--bg-2)] px-4">
           <div className="flex min-w-0 items-center gap-2.5">
-            <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[var(--accent)] text-[13px] font-bold text-[var(--accent-fg)] shadow-[var(--shadow-sm)]">
-              D
-            </span>
+            <img
+              src={brandSymbol}
+              alt=""
+              width={30}
+              height={30}
+              className="h-[30px] w-[30px] shrink-0 object-contain drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]"
+            />
             <div className="min-w-0">
+              {/* Kata merek: "Installer" memakai warna aksen, sama seperti wordmark. */}
               <div className="truncate text-[13.5px] font-semibold leading-tight tracking-tight">
-                {i18n.t("app.name")}
+                Deb<span className="text-[var(--accent)]">Installer</span>
               </div>
               <div className="hidden truncate text-[10.5px] leading-tight text-[var(--faint)] sm:block">
                 Arch Linux

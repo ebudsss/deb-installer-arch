@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import brandSymbol from "../assets/brand-symbol.png";
 import { api, type InstallRecord } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { useToast } from "../components/toast";
@@ -24,7 +25,6 @@ import {
   IconSearch,
   IconTrash,
   IconX,
-  PackageIllustration,
 } from "../components/icons";
 
 type Filter = "all" | "installed" | "pending";
@@ -175,7 +175,7 @@ export function Installed({
 
       {records !== null && records.length === 0 ? (
         <EmptyState
-          illustration={<PackageIllustration className="h-24 w-28" />}
+          illustration={<img src={brandSymbol} alt="" className="h-20 w-20 object-contain" />}
           title={t("installed.empty")}
           description={t("installed.emptyBody")}
           action={<Button onClick={onGoHome}>{t("installed.emptyAction")}</Button>}

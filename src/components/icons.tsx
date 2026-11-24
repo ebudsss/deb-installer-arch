@@ -138,12 +138,6 @@ export const IconShield = (p: IconProps) => (
   </Icon>
 );
 
-export const IconChevron = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="m9.5 6.5 5.5 5.5-5.5 5.5" />
-  </Icon>
-);
-
 export const IconArrowLeft = (p: IconProps) => (
   <Icon {...p}>
     <path d="M19 12H5.4" />
@@ -181,56 +175,3 @@ export const IconFile = (p: IconProps) => (
   </Icon>
 );
 
-export const IconPlay = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M8.4 5.6 18 12l-9.6 6.4z" />
-  </Icon>
-);
-
-/** Lambang paket untuk keadaan kosong dan ilustrasi dropzone. */
-export function PackageIllustration({ className = "" }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 120 96"
-      className={className}
-      fill="none"
-      aria-hidden
-      focusable="false"
-    >
-      <defs>
-        <linearGradient id="pk-top" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="var(--accent)" stopOpacity="0.9" />
-          <stop offset="1" stopColor="var(--accent)" stopOpacity="0.55" />
-        </linearGradient>
-        <linearGradient id="pk-left" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="var(--accent)" stopOpacity="0.5" />
-          <stop offset="1" stopColor="var(--accent)" stopOpacity="0.18" />
-        </linearGradient>
-        <linearGradient id="pk-right" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="var(--accent)" stopOpacity="0.32" />
-          <stop offset="1" stopColor="var(--accent)" stopOpacity="0.1" />
-        </linearGradient>
-      </defs>
-      <ellipse cx="60" cy="84" rx="38" ry="5" fill="var(--fg)" opacity="0.06" />
-      <path d="M60 20 96 38v34L60 90 24 72V38z" fill="url(#pk-left)" />
-      <path d="M60 20 96 38 60 56 24 38z" fill="url(#pk-top)" />
-      <path d="M60 56v34L24 72V38z" fill="url(#pk-left)" opacity="0.85" />
-      <path d="M60 56v34l36-18V38z" fill="url(#pk-right)" />
-      <path
-        d="M60 20 96 38v34L60 90 24 72V38z"
-        stroke="var(--accent)"
-        strokeOpacity="0.55"
-        strokeWidth="1.4"
-      />
-      <path d="M24 38 60 56l36-18" stroke="var(--accent)" strokeOpacity="0.55" strokeWidth="1.4" />
-      <path d="M60 56v34" stroke="var(--accent)" strokeOpacity="0.4" strokeWidth="1.4" />
-      <path
-        d="M42 29.6 78 47.6"
-        stroke="var(--accent-fg)"
-        strokeOpacity="0.35"
-        strokeWidth="2.2"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}

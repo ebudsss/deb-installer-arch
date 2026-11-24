@@ -37,11 +37,9 @@ package() {
     "$pkgdir/usr/share/applications/deb-installer.desktop"
   install -Dm644 packaging/deb-installer-mime.xml \
     "$pkgdir/usr/share/mime/packages/deb-installer.xml"
-  install -Dm644 src-tauri/icons/icon.png \
-    "$pkgdir/usr/share/icons/hicolor/512x512/apps/deb-installer.png"
-  install -Dm644 src-tauri/icons/128x128.png \
-    "$pkgdir/usr/share/icons/hicolor/128x128/apps/deb-installer.png"
-  install -Dm644 src-tauri/icons/32x32.png \
-    "$pkgdir/usr/share/icons/hicolor/32x32/apps/deb-installer.png"
+  for size in 16x16 24x24 32x32 48x48 64x64 128x128 256x256 512x512; do
+    install -Dm644 "src-tauri/icons/$size.png" \
+      "$pkgdir/usr/share/icons/hicolor/$size/apps/deb-installer.png"
+  done
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

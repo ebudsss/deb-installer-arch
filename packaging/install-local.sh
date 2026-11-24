@@ -20,7 +20,7 @@ MIME="$HOME/.local/share/mime/packages"
 
 uninstall() {
   rm -f "$BIN_DST" "$APPS/deb-installer.desktop" "$MIME/deb-installer.xml"
-  for size in 32x32 128x128 256x256 512x512; do
+  for size in 16x16 24x24 32x32 48x48 64x64 128x128 256x256 512x512; do
     rm -f "$ICONS/$size/apps/deb-installer.png"
   done
   update-desktop-database "$APPS" 2>/dev/null || true
@@ -40,14 +40,15 @@ if [ ! -x "$BIN_SRC" ]; then
   exit 1
 fi
 
-mkdir -p "$(dirname "$BIN_DST")" "$APPS" "$MIME" \
-  "$ICONS/32x32/apps" "$ICONS/128x128/apps" "$ICONS/256x256/apps" "$ICONS/512x512/apps"
+mkdir -p "$(dirname "$BIN_DST")" "$APPS" "$MIME"
+for size in 16x16 24x24 32x32 48x48 64x64 128x128 256x256 512x512; do
+  mkdir -p "$ICONS/$size/apps"
+done
 
 install -m755 "$BIN_SRC" "$BIN_DST"
-install -m644 src-tauri/icons/32x32.png "$ICONS/32x32/apps/deb-installer.png"
-install -m644 src-tauri/icons/128x128.png "$ICONS/128x128/apps/deb-installer.png"
-install -m644 src-tauri/icons/128x128@2x.png "$ICONS/256x256/apps/deb-installer.png"
-install -m644 src-tauri/icons/icon.png "$ICONS/512x512/apps/deb-installer.png"
+for size in 16x16 24x24 32x32 48x48 64x64 128x128 256x256 512x512; do
+  install -m644 "src-tauri/icons/$size.png" "$ICONS/$size/apps/deb-installer.png"
+done
 install -m644 packaging/deb-installer-mime.xml "$MIME/deb-installer.xml"
 
 # WEBKIT_DISABLE_DMABUF_RENDERER wajib di sebagian driver; tanpa itu jendela

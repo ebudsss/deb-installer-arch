@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import brandSymbol from "../assets/brand-symbol.png";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, type Analysis, type InstallRecord } from "../lib/api";
@@ -15,7 +16,6 @@ import {
   IconShield,
   IconTerminal,
   IconUpload,
-  PackageIllustration,
 } from "../components/icons";
 
 const MAX_RECENT = 4;
@@ -127,8 +127,12 @@ export function Home({
       >
         {busy ? (
           <>
-            <div className="relative">
-              <PackageIllustration className="h-[4.5rem] w-24 opacity-40" />
+            <div className="relative grid h-20 w-20 place-items-center">
+              <img
+                src={brandSymbol}
+                alt=""
+                className="h-full w-full object-contain opacity-30"
+              />
               <span className="absolute inset-0 grid place-items-center">
                 <Spinner size={22} />
               </span>
@@ -137,9 +141,11 @@ export function Home({
           </>
         ) : (
           <>
-            <PackageIllustration
-              className={`h-[4.5rem] w-24 transition-transform duration-200 ${
-                dragging ? "scale-105" : "group-hover:scale-[1.02]"
+            <img
+              src={brandSymbol}
+              alt=""
+              className={`h-20 w-20 object-contain transition-transform duration-200 ${
+                dragging ? "scale-105" : "group-hover:scale-[1.03]"
               }`}
             />
             <p className="mt-3 text-[14px] font-semibold">
