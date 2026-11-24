@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { api, type Analysis, type Settings } from "./lib/api";
-import { I18nContext, translate } from "./lib/i18n";
-import { Banner, Button } from "./components/ui";
+import { I18nContext, translate, type StringKey } from "./lib/i18n";
+import { ToastProvider, useToast } from "./components/toast";
+import { IconBox, IconHome, IconSettings, IconShield } from "./components/icons";
 import { Home } from "./pages/Home";
 import { Review } from "./pages/Review";
 import { Progress } from "./pages/Progress";
@@ -16,6 +17,8 @@ type Screen =
   | { kind: "installed" }
   | { kind: "settings" };
 
+type NavId = "home" | "installed" | "settings";
+
 const DEFAULT_SETTINGS: Settings = {
   language: "id",
   theme: "system",
@@ -25,11 +28,37 @@ const DEFAULT_SETTINGS: Settings = {
   custom_mapping: "",
 };
 
-export default function App() {
+const NAV: { id: NavId; label: StringKey; icon: typeof IconHome }[] = [
+  { id: "home", label: "nav.home", icon: IconHome },
+  { id: "installed", label: "nav.installed", icon: IconBox },
+  { id: "settings", label: "nav.settings", icon: IconSettings },
+];
+
+/** Mengikuti perubahan tema sistem selama pengguna memilih "system". */
+function useResolvedTheme(theme: Settings["theme"]): "dark" | "light" {
+  const [systemTheme, setSystemTheme] = useState<"dark" | "light">(() =>
+    window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark",
+  );
+
+  useEffect(() => {
+    const query = window.matchMedia("(prefers-color-scheme: light)");
+    const onChange = (event: MediaQueryListEvent) => {
+      setSystemTheme(event.matches ? "light" : "dark");
+    };
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+
+  return theme === "system" ? systemTheme : theme;
+}
+
+function Shell() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [ready, setReady] = useState(false);
   const [screen, setScreen] = useState<Screen>({ kind: "home" });
-  const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
+
+  const reportError = useCallback((message: string) => toast.error(message), [toast]);
 
   useEffect(() => {
     api
@@ -48,91 +77,87 @@ export default function App() {
         const analysis = await api.analyze(path);
         setScreen({ kind: "review", analysis });
       })
-      .catch((e) => setError(String(e)));
-  }, [ready]);
+      .catch((e) => reportError(String(e)));
+  }, [ready, reportError]);
 
+  const resolvedTheme = useResolvedTheme(settings.theme);
   useEffect(() => {
-    const root = document.documentElement;
-    if (settings.theme === "system") {
-      delete root.dataset.theme;
-    } else {
-      root.dataset.theme = settings.theme;
-    }
-  }, [settings.theme]);
+    document.documentElement.dataset.theme = resolvedTheme;
+  }, [resolvedTheme]);
 
   const i18n = useMemo(
     () => ({
       lang: settings.language,
-      t: (key: Parameters<typeof translate>[1]) => translate(settings.language, key),
+      t: (key: StringKey) => translate(settings.language, key),
     }),
     [settings.language],
   );
 
-  const navItems = [
-    { id: "home" as const, label: i18n.t("nav.home") },
-    { id: "installed" as const, label: i18n.t("nav.installed") },
-    { id: "settings" as const, label: i18n.t("nav.settings") },
-  ];
-
-  const activeNav =
+  const activeNav: NavId =
     screen.kind === "review" || screen.kind === "progress" ? "home" : screen.kind;
+
+  function navigate(id: NavId) {
+    setScreen({ kind: id });
+  }
 
   return (
     <I18nContext.Provider value={i18n}>
-      <div className="flex h-full flex-col">
-        <header className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--surface)] px-6 py-3">
-          <div className="flex items-center gap-2">
-            <span className="grid h-7 w-7 place-items-center rounded-lg bg-[var(--accent)] text-sm font-bold text-[var(--accent-fg)]">
+      <div className="flex h-full flex-col bg-[var(--bg)]">
+        <header className="sticky top-0 z-30 flex h-[52px] shrink-0 items-center justify-between gap-4 border-b border-[var(--border)] bg-[var(--bg-2)] px-4">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[var(--accent)] text-[13px] font-bold text-[var(--accent-fg)] shadow-[var(--shadow-sm)]">
               D
             </span>
-            <span className="font-semibold tracking-tight">{i18n.t("app.name")}</span>
+            <div className="min-w-0">
+              <div className="truncate text-[13.5px] font-semibold leading-tight tracking-tight">
+                {i18n.t("app.name")}
+              </div>
+              <div className="hidden truncate text-[10.5px] leading-tight text-[var(--faint)] sm:block">
+                Arch Linux
+              </div>
+            </div>
           </div>
-          <nav className="flex gap-1" aria-label="Navigasi utama">
-            {navItems.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => {
-                  setError(null);
-                  setScreen({ kind: item.id } as Screen);
-                }}
-                aria-current={activeNav === item.id ? "page" : undefined}
-                className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-                  activeNav === item.id
-                    ? "bg-[var(--surface-2)] text-[var(--fg)]"
-                    : "text-[var(--muted)] hover:text-[var(--fg)]"
-                }`}
-              >
-                {item.label}
-              </button>
-            ))}
+
+          <nav className="flex items-center gap-0.5" aria-label="Navigasi utama">
+            {NAV.map((item) => {
+              const active = activeNav === item.id;
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => navigate(item.id)}
+                  aria-current={active ? "page" : undefined}
+                  className={`relative flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[13px] font-medium transition-colors duration-150 ${
+                    active
+                      ? "bg-[var(--surface-2)] text-[var(--fg)]"
+                      : "text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--fg)]"
+                  }`}
+                >
+                  <Icon size={15} className={active ? "text-[var(--accent)]" : undefined} />
+                  <span className="hidden sm:inline">{i18n.t(item.label)}</span>
+                  {active ? (
+                    <span
+                      aria-hidden
+                      className="absolute inset-x-2.5 -bottom-px h-px bg-[var(--accent)]"
+                    />
+                  ) : null}
+                </button>
+              );
+            })}
           </nav>
         </header>
 
-        <main className="flex-1 overflow-auto px-6 py-6">
+        <main className="min-h-0 flex-1 overflow-y-auto">
           {!ready ? (
-            <p className="text-[var(--muted)]">…</p>
+            <div className="mx-auto flex w-full max-w-5xl items-center gap-2 px-6 py-10 text-[13px] text-[var(--muted)]">
+              {i18n.t("common.loading")}
+            </div>
           ) : (
-            <>
-              {error ? (
-                <div className="mx-auto mb-4 flex w-full max-w-5xl items-start gap-3">
-                  <div className="flex-1">
-                    <Banner tone="error" title={i18n.t("common.error")}>
-                      <span className="break-words">{error}</span>
-                    </Banner>
-                  </div>
-                  <Button variant="ghost" onClick={() => setError(null)}>
-                    {i18n.t("common.close")}
-                  </Button>
-                </div>
-              ) : null}
-
+            <div key={screen.kind} className="animate-fade px-5 py-6">
               {screen.kind === "home" ? (
                 <Home
-                  onAnalyzed={(analysis) => {
-                    setError(null);
-                    setScreen({ kind: "review", analysis });
-                  }}
-                  onError={setError}
+                  onAnalyzed={(analysis) => setScreen({ kind: "review", analysis })}
+                  onError={reportError}
                 />
               ) : null}
 
@@ -153,15 +178,37 @@ export default function App() {
                 />
               ) : null}
 
-              {screen.kind === "installed" ? <Installed onError={setError} /> : null}
+              {screen.kind === "installed" ? (
+                <Installed onError={reportError} onGoHome={() => setScreen({ kind: "home" })} />
+              ) : null}
 
               {screen.kind === "settings" ? (
-                <SettingsPage settings={settings} onChange={setSettings} onError={setError} />
+                <SettingsPage
+                  settings={settings}
+                  onChange={setSettings}
+                  onError={reportError}
+                />
               ) : null}
-            </>
+            </div>
           )}
         </main>
+
+        <footer className="flex h-7 shrink-0 items-center justify-between border-t border-[var(--border)] bg-[var(--bg-2)] px-4 text-[10.5px] text-[var(--faint)]">
+          <span className="flex items-center gap-1.5">
+            <IconShield size={11} />
+            {i18n.t("footer.note")}
+          </span>
+          <span className="tabular-nums">v0.1.0</span>
+        </footer>
       </div>
     </I18nContext.Provider>
+  );
+}
+
+export default function App() {
+  return (
+    <ToastProvider>
+      <Shell />
+    </ToastProvider>
   );
 }

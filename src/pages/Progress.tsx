@@ -4,6 +4,13 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api, formatBytes, type Analysis, type BuildResult, type InstallOutcome, type Progress as ProgressEvent, type Settings } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { Banner, Button, Card, Spinner } from "../components/ui";
+import {
+  IconAlert,
+  IconCheck,
+  IconFolder,
+  IconRefresh,
+  IconX,
+} from "../components/icons";
 
 type Phase = "convert" | "install" | "done" | "error";
 
@@ -73,6 +80,10 @@ export function Progress({
 
         const installed = await api.install(built.package_path, settings.keep_packages);
         setOutcome(installed);
+        // Event `install-log` mengisi log saat berjalan; bila tidak ada yang
+        // diterima (mis. kegagalan sebelum pacman dijalankan), pakai salinan
+        // dari hasil agar pengguna tetap melihat penyebabnya.
+        setLines((prev) => (prev.length > 0 ? prev : installed.log));
         if (installed.success) {
           setPhase("done");
           setMessage(t("progress.success"));
@@ -115,47 +126,79 @@ export function Progress({
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
-      <div className="flex items-center gap-3">
-        {busy ? <Spinner /> : null}
-        <h1 className="text-xl font-semibold tracking-tight">
-          {analysis.package} {analysis.version}
-        </h1>
-      </div>
+    <div className="mx-auto flex w-full max-w-[46rem] flex-col gap-4">
+      <header className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          {busy ? (
+            <Spinner size={16} />
+          ) : phase === "done" ? (
+            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[var(--success-soft)] text-[var(--success)]">
+              <IconCheck size={13} />
+            </span>
+          ) : (
+            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[var(--error-soft)] text-[var(--error)]">
+              <IconAlert size={13} />
+            </span>
+          )}
+          <div className="min-w-0">
+            <h1 className="truncate text-[18px] font-semibold leading-tight tracking-tight">
+              {analysis.package}
+            </h1>
+            <p className="truncate text-[11.5px] text-[var(--faint)]">
+              {analysis.version} · {analysis.arch}
+            </p>
+          </div>
+        </div>
+      </header>
 
-      <Card className="p-4">
-        <ol className="flex flex-wrap gap-2">
-          {STAGES.map((stage, index) => {
-            const state =
-              phase === "error" && index === activeIndex
-                ? "error"
-                : index < activeIndex || phase === "done"
-                  ? "done"
-                  : index === activeIndex
-                    ? "active"
-                    : "pending";
-            const color =
-              state === "error"
-                ? "border-[var(--error)] text-[var(--error)]"
-                : state === "done"
-                  ? "border-[var(--success)] text-[var(--success)]"
-                  : state === "active"
-                    ? "border-[var(--accent)] text-[var(--accent)]"
-                    : "border-[var(--border)] text-[var(--muted)]";
-            return (
-              <li
-                key={stage.id}
-                className={`flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium ${color}`}
-              >
-                <span className="grid h-4 w-4 place-items-center rounded-full border border-current text-[10px]">
-                  {index + 1}
-                </span>
-                {t(stage.labelKey)}
-              </li>
-            );
-          })}
-        </ol>
-        <p className="mt-3 text-sm text-[var(--muted)]">{message}</p>
+      <Card className="overflow-hidden">
+        {/* Garis kemajuan: tak tentu selama bekerja, penuh saat selesai. */}
+        <div className="h-0.5 w-full overflow-hidden bg-[var(--surface-2)]">
+          {busy ? (
+            <div className="h-full w-1/3 animate-[shimmer_1.4s_ease-in-out_infinite] bg-[var(--accent)]" />
+          ) : phase === "done" ? (
+            <div className="h-full w-full bg-[var(--success)]" />
+          ) : null}
+        </div>
+
+        <div className="p-3.5">
+          <ol className="flex flex-wrap items-center gap-1.5">
+            {STAGES.map((stage, index) => {
+              const state =
+                phase === "error" && index === activeIndex
+                  ? "error"
+                  : index < activeIndex || phase === "done"
+                    ? "done"
+                    : index === activeIndex
+                      ? "active"
+                      : "pending";
+              const styles =
+                state === "error"
+                  ? "border-[var(--error)]/50 bg-[var(--error-soft)] text-[var(--error)]"
+                  : state === "done"
+                    ? "border-[var(--success)]/40 bg-[var(--success-soft)] text-[var(--success)]"
+                    : state === "active"
+                      ? "border-[var(--accent)]/50 bg-[var(--accent-soft)] text-[var(--accent)]"
+                      : "border-[var(--border)] text-[var(--faint)]";
+              return (
+                <li key={stage.id} className="flex items-center gap-1.5">
+                  <span
+                    className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11.5px] font-medium ${styles}`}
+                  >
+                    <span className="grid h-3.5 w-3.5 place-items-center rounded-full border border-current text-[8.5px] font-semibold">
+                      {state === "done" ? "✓" : index + 1}
+                    </span>
+                    {t(stage.labelKey)}
+                  </span>
+                  {index < STAGES.length - 1 ? (
+                    <span aria-hidden className="h-px w-2 bg-[var(--border)]" />
+                  ) : null}
+                </li>
+              );
+            })}
+          </ol>
+          {busy ? <p className="mt-2.5 text-[12.5px] text-[var(--muted)]">{message}</p> : null}
+        </div>
       </Card>
 
       {error ? (
@@ -166,46 +209,56 @@ export function Progress({
 
       {phase === "done" && result ? (
         <Banner tone="success" title={t("progress.success")}>
-          <p>
+          <p className="tabular-nums">
             {result.pkgname} {result.pkgver}-{result.pkgrel} · {formatBytes(result.installed_size)} ·{" "}
             {result.file_count} {t("progress.files")}
           </p>
         </Banner>
       ) : null}
 
-      <Card className="p-0">
-        <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-2">
-          <span className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+      <Card className="overflow-hidden p-0">
+        <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-3.5 py-2">
+          <span className="text-[10.5px] font-semibold uppercase tracking-wider text-[var(--faint)]">
             {t("progress.log")}
           </span>
           {result ? (
-            <Button variant="ghost" onClick={() => void revealItemInDir(result.package_path)}>
+            <Button variant="subtle" size="sm" onClick={() => void revealItemInDir(result.package_path)}>
+              <IconFolder size={13} />
               {t("progress.openFolder")}
             </Button>
           ) : null}
         </div>
-        <pre ref={logRef} className="log max-h-72 overflow-auto p-4">
-          {lines.length === 0 ? "…" : lines.join("\n")}
+        <pre ref={logRef} className="log max-h-64 overflow-auto bg-[var(--bg-2)] p-3.5">
+          {lines.length === 0 ? t("progress.logEmpty") : lines.join("\n")}
         </pre>
       </Card>
 
       <div className="flex justify-end gap-2">
-        {phase === "done" ? <Button onClick={onDone}>{t("progress.done")}</Button> : null}
+        {phase === "done" ? (
+          <Button onClick={onDone}>
+            <IconCheck size={14} />
+            {t("progress.done")}
+          </Button>
+        ) : null}
         {phase === "error" ? (
           <>
-            <Button variant="ghost" onClick={onDone}>
+            <Button variant="subtle" onClick={onDone}>
+              <IconX size={14} />
               {t("common.close")}
             </Button>
             <Button variant="ghost" onClick={onRetry}>
               {t("review.back")}
             </Button>
-            <Button onClick={retry}>{t("progress.retry")}</Button>
+            <Button onClick={retry}>
+              <IconRefresh size={14} />
+              {t("progress.retry")}
+            </Button>
           </>
         ) : null}
       </div>
 
       {outcome && !outcome.success ? (
-        <p className="text-xs text-[var(--muted)]">
+        <p className="text-[11.5px] text-[var(--faint)]">
           {outcome.diagnosis ? `${t("progress.diagnosis")}: ${outcome.diagnosis}` : null}
         </p>
       ) : null}

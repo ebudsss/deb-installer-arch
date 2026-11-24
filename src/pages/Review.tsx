@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { formatBytes, type Analysis } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { Banner, Button, Card, Pill, RiskBadge, StatusPill, Tabs } from "../components/ui";
+import { IconArrowLeft, IconCheck } from "../components/icons";
 
 type TabId = "info" | "deps" | "files" | "scripts";
 
@@ -24,22 +25,28 @@ export function Review({
   const canInstall = !analysis.blocked && (!needsAck || acknowledged);
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+    <div className="mx-auto flex w-full max-w-[60rem] flex-col gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="truncate text-2xl font-semibold tracking-tight">{analysis.package}</h1>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <h1 className="truncate text-[22px] font-semibold leading-tight tracking-tight">
+              {analysis.package}
+            </h1>
             <Pill tone="neutral">{analysis.version}</Pill>
             <Pill tone="accent">{analysis.arch}</Pill>
             <RiskBadge risk={analysis.max_risk} />
           </div>
-          <p className="mt-1 line-clamp-2 text-[var(--muted)]">{analysis.description.split("\n")[0]}</p>
+          <p className="mt-1 line-clamp-2 max-w-xl text-[13px] leading-relaxed text-[var(--muted)]">
+            {analysis.description.split("\n")[0]}
+          </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex shrink-0 gap-2">
           <Button variant="ghost" onClick={onBack}>
+            <IconArrowLeft size={14} />
             {t("review.back")}
           </Button>
           <Button onClick={onInstall} disabled={!canInstall}>
+            <IconCheck size={14} />
             {t("review.install")}
           </Button>
         </div>
@@ -71,7 +78,7 @@ export function Review({
                 </li>
               ))}
           </ul>
-          <label className="mt-3 flex items-start gap-2 text-sm">
+          <label className="mt-3 flex items-start gap-2 text-[12.5px]">
             <input
               type="checkbox"
               checked={acknowledged}
@@ -118,7 +125,7 @@ export function Review({
             },
           ]}
         />
-        <div className="p-4">
+        <div className="p-3.5">
           {tab === "info" ? <InfoTab analysis={analysis} /> : null}
           {tab === "deps" ? <DepsTab analysis={analysis} /> : null}
           {tab === "files" ? <FilesTab analysis={analysis} /> : null}
@@ -131,9 +138,9 @@ export function Review({
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="grid grid-cols-[10rem_1fr] gap-3 py-1.5">
-      <dt className="text-[var(--muted)]">{label}</dt>
-      <dd className="min-w-0 break-words">{children}</dd>
+    <div className="grid grid-cols-[9.5rem_1fr] items-baseline gap-3 py-1.5">
+      <dt className="text-[12px] text-[var(--faint)]">{label}</dt>
+      <dd className="min-w-0 break-words text-[12.5px]">{children}</dd>
     </div>
   );
 }
@@ -142,7 +149,7 @@ function InfoTab({ analysis }: { analysis: Analysis }) {
   const { t } = useI18n();
   return (
     <div className="space-y-5">
-      <dl className="divide-y divide-[var(--border)]">
+      <dl className="divide-y divide-[var(--border)]/70">
         <Row label={t("info.package")}>{analysis.package}</Row>
         <Row label={t("info.version")}>{analysis.version}</Row>
         <Row label={t("info.arch")}>
@@ -154,7 +161,7 @@ function InfoTab({ analysis }: { analysis: Analysis }) {
         <Row label={t("info.maintainer")}>{analysis.maintainer || "—"}</Row>
         {analysis.homepage ? (
           <Row label={t("info.homepage")}>
-            <a className="text-[var(--accent)] underline" href={analysis.homepage} target="_blank" rel="noreferrer">
+            <a className="text-[var(--accent)] hover:underline" href={analysis.homepage} target="_blank" rel="noreferrer">
               {analysis.homepage}
             </a>
           </Row>
@@ -166,7 +173,7 @@ function InfoTab({ analysis }: { analysis: Analysis }) {
           <code>{analysis.data_member}</code>
         </Row>
         <Row label={t("info.sha256")}>
-          <code className="break-all text-xs">{analysis.sha256}</code>
+          <code className="break-all font-mono text-[11px] text-[var(--muted)]">{analysis.sha256}</code>
         </Row>
       </dl>
 
@@ -201,11 +208,26 @@ function DepsTab({ analysis }: { analysis: Analysis }) {
   }
   return (
     <div className="space-y-3">
-      <p className="text-sm text-[var(--muted)]">
-        {summary.total} {t("deps.summary")} · {summary.installed} {t("common.status.Installed")} ·{" "}
-        {summary.available} {t("common.status.Available")} · {summary.aur} AUR · {summary.missing}{" "}
-        {t("common.status.Missing")} · {summary.ignored} {t("common.status.Ignored")}
-      </p>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {(
+          [
+            [summary.installed, t("common.status.Installed"), "success"],
+            [summary.available, t("common.status.Available"), "accent"],
+            [summary.aur, "AUR", "warning"],
+            [summary.missing, t("common.status.Missing"), "error"],
+            [summary.ignored, t("common.status.Ignored"), "neutral"],
+          ] as const
+        )
+          .filter(([count]) => count > 0)
+          .map(([count, label, tone]) => (
+            <Pill key={label} tone={tone}>
+              <span className="tabular-nums">{count}</span> {label}
+            </Pill>
+          ))}
+        <span className="ml-1 text-[11.5px] text-[var(--faint)]">
+          {summary.total} {t("deps.summary")}
+        </span>
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead className="border-b border-[var(--border)] text-xs uppercase tracking-wide text-[var(--muted)]">
