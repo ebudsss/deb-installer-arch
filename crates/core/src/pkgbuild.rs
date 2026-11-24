@@ -870,7 +870,9 @@ pub(crate) fn extract_tar(
             let is_bin = !stripped.contains('/') || stripped.starts_with("bin/");
             if is_bin && mode & 0o111 != 0 {
                 if let Some(name) = stripped.rsplit('/').next() {
-                    if !name.is_empty() {
+                    // Varian untuk arsitektur lain tidak ditautkan; arsip
+                    // sering membawa beberapa varian sekaligus.
+                    if !name.is_empty() && !crate::archive::is_foreign_arch(name) {
                         portable_bins.push((format!("usr/bin/{name}"), format!("/{rel}")));
                     }
                 }

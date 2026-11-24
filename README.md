@@ -68,6 +68,13 @@ from the contents:
 | **System** | The archive already has `usr/`, `opt/`, `etc/`, `var/`, `bin/`, `lib/` at its root | Installed as-is after path normalization |
 | **Portable** | Everything sits under one directory, or the archive is flat | Contents go to `/opt/<pkg>-deb/`, executables in `bin/` (and at the root) are symlinked into `/usr/bin`, and any `.desktop` file is moved to `/usr/share/applications` |
 
+Portable archives rarely ship a `.desktop` file, so one is **generated** when it is
+missing: it points at the most likely GUI binary (a name containing `gui`, else the
+first non-script executable) and sets `Path=/opt/<pkg>-deb` so launchers that load
+files through relative paths still work. Binaries built for a different CPU
+architecture (e.g. `VentoyGUI.aarch64` on x86_64) are skipped instead of being
+linked into `/usr/bin`.
+
 Both layouts go through the same safety checks as `.deb`: protected paths are
 refused, and the resulting package carries `.PKGINFO`, `.MTREE`, and the `-deb`
 suffix. Archives have no dependency metadata or maintainer scripts, so those tabs

@@ -214,6 +214,71 @@ fn refuses_archives_touching_protected_paths() {
 }
 
 #[test]
+fn generates_desktop_entry_when_archive_has_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let archive = TarBuilder::new()
+        .dir("ventoy-1.1.18/")
+        .file("ventoy-1.1.18/VentoyGUI.x86_64", b"\x7fELF", 0o755)
+        .file("ventoy-1.1.18/VentoyGUI.aarch64", b"\x7fELF", 0o755)
+        .file("ventoy-1.1.18/Ventoy2Disk.sh", b"#!/bin/sh\n", 0o755)
+        .file("ventoy-1.1.18/README", b"readme", 0o644)
+        .write_gz(dir.path(), "ventoy-1.1.18-linux.tar.gz");
+
+    let pkg = ArchivePackage::open(&archive).unwrap();
+    let out = dir.path().join("out");
+    let staging = dir.path().join("stage");
+    let result = pkg.build(&BuildOptions::new(&staging, &out)).unwrap();
+
+    // Entri menu dibuat dan menunjuk binari GUI.
+    let desktop =
+        std::fs::read_to_string(staging.join("usr/share/applications/ventoy-deb.desktop")).unwrap();
+    assert!(desktop.contains("Exec=VentoyGUI.x86_64"), "{desktop}");
+    assert!(desktop.contains("Terminal=false"));
+    assert!(desktop.contains("X-DebInstaller-Generated=true"));
+    // Aplikasi portable memuat berkas pendukung lewat path relatif.
+    assert!(desktop.contains("Path=/opt/ventoy-deb"), "{desktop}");
+    assert!(result
+        .notes
+        .iter()
+        .any(|n| n.contains(".desktop dibuat otomatis")));
+
+    // Varian arsitektur lain tidak ditautkan ke /usr/bin.
+    if std::env::consts::ARCH == "x86_64" {
+        assert!(staging.join("usr/bin/VentoyGUI.x86_64").exists());
+        assert!(!staging.join("usr/bin/VentoyGUI.aarch64").exists());
+    }
+    assert!(staging.join("usr/bin/Ventoy2Disk.sh").exists());
+}
+
+#[test]
+fn keeps_archive_desktop_entry_instead_of_generating() {
+    let dir = tempfile::tempdir().unwrap();
+    let archive = TarBuilder::new()
+        .dir("app/")
+        .file("app/app", b"#!/bin/sh\n", 0o755)
+        .file(
+            "app/app.desktop",
+            b"[Desktop Entry]\nName=Real App\nExec=app\n",
+            0o644,
+        )
+        .write_gz(dir.path(), "app-1.0.0.tar.gz");
+
+    let pkg = ArchivePackage::open(&archive).unwrap();
+    let out = dir.path().join("out");
+    let staging = dir.path().join("stage");
+    let result = pkg.build(&BuildOptions::new(&staging, &out)).unwrap();
+
+    let generated = staging.join("usr/share/applications/app-deb.desktop");
+    assert!(!generated.exists(), "tidak boleh menimpa entri dari arsip");
+    let kept = std::fs::read_to_string(staging.join("usr/share/applications/app.desktop")).unwrap();
+    assert!(kept.contains("Name=Real App"));
+    assert!(!result
+        .notes
+        .iter()
+        .any(|n| n.contains(".desktop dibuat otomatis")));
+}
+
+#[test]
 fn rejects_unsupported_archive_types() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("thing.zip");

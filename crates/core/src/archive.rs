@@ -267,6 +267,37 @@ impl ArchivePackage {
             &mut extraction.entries,
         )?;
 
+        // Arsip jarang menyertakan berkas .desktop, sehingga paketnya tidak
+        // muncul di menu aplikasi. Bila tidak ada, buat satu entri untuk
+        // binari GUI yang paling mungkin.
+        if matches!(self.layout, ArchiveLayout::Portable { .. })
+            && !extraction.entries.iter().any(|e| {
+                e.path.starts_with("usr/share/applications/") && e.path.ends_with(".desktop")
+            })
+        {
+            match desktop_executable(&self.executables) {
+                Some(exec) => {
+                    let workdir = format!("/opt/{pkgname}");
+                    let desktop = render_desktop_entry(
+                        &pkgname,
+                        &exec,
+                        self.description.as_deref(),
+                        Some(&workdir),
+                    );
+                    let path = format!("usr/share/applications/{pkgname}.desktop");
+                    ensure_parent_dir(staging, &path)?;
+                    write_metadata(staging, &path, desktop.as_bytes(), &mut extraction.entries)?;
+                    notes.push(format!(
+                        "berkas .desktop dibuat otomatis untuk `{exec}` agar muncul di menu aplikasi"
+                    ));
+                }
+                None => notes.push(
+                    "tidak ada binari GUI yang bisa dijadikan entri menu; jalankan dari terminal"
+                        .to_string(),
+                ),
+            }
+        }
+
         let mut mtree_buf = Vec::new();
         mtree::write_gzip(&extraction.entries, &mut mtree_buf)
             .map_err(|e| Error::Build(format!(".MTREE: {e}")))?;
@@ -408,6 +439,40 @@ fn detect_layout(paths: &[(String, &'static str, u64, bool)]) -> ArchiveLayout {
     ArchiveLayout::Portable { root: None }
 }
 
+/// Akhiran arsitektur yang lazim dipakai pada nama berkas binari.
+const ARCH_SUFFIXES: &[(&str, &str)] = &[
+    ("x86_64", "x86_64"),
+    ("amd64", "x86_64"),
+    ("aarch64", "aarch64"),
+    ("arm64", "aarch64"),
+    ("i386", "x86"),
+    ("i686", "x86"),
+    ("armhf", "arm"),
+    ("armv7l", "arm"),
+    ("riscv64", "riscv64"),
+    ("mips64el", "mips64"),
+    ("ppc64le", "powerpc64"),
+];
+
+/// Arsitektur binari yang tertulis pada nama berkas, mis.
+/// `VentoyGUI.x86_64` → `x86_64`.
+fn binary_arch(name: &str) -> Option<&'static str> {
+    let (_, suffix) = name.rsplit_once('.')?;
+    ARCH_SUFFIXES
+        .iter()
+        .find(|(tag, _)| tag.eq_ignore_ascii_case(suffix))
+        .map(|(_, arch)| *arch)
+}
+
+/// Apakah binari ini ditujukan untuk arsitektur lain, sehingga tidak layak
+/// ditautkan. Arsip sering membawa beberapa varian arsitektur sekaligus.
+pub(crate) fn is_foreign_arch(name: &str) -> bool {
+    match binary_arch(name) {
+        Some(arch) => arch != std::env::consts::ARCH,
+        None => false,
+    }
+}
+
 /// Binari yang layak ditautkan ke `/usr/bin`: berkas executable di `bin/`
 /// atau di akar arsip (setelah root dibuang).
 fn detect_executables(
@@ -428,8 +493,11 @@ fn detect_executables(
                 return None;
             }
             let name = stripped.rsplit('/').next()?.to_string();
-            // Berkas seperti `install.sh` tetap ditautkan; pengguna melihat
-            // daftarnya sebelum memasang.
+            // Varian untuk arsitektur lain dilewati agar /usr/bin tidak
+            // dipenuhi tautan yang tidak bisa dijalankan.
+            if is_foreign_arch(&name) {
+                return None;
+            }
             Some(name)
         })
         .collect();
@@ -541,6 +609,60 @@ pub fn warning_count(warnings: &[SensitivePath]) -> usize {
     warnings.len()
 }
 
+/// Membuat direktori induk untuk path relatif di dalam staging.
+fn ensure_parent_dir(staging: &Path, rel: &str) -> Result<()> {
+    if let Some((parent, _)) = rel.rsplit_once('/') {
+        fs::create_dir_all(staging.join(parent))?;
+    }
+    Ok(())
+}
+
+/// Memilih binari untuk entri menu: utamakan nama yang mengandung `gui`,
+/// hindari skrip shell bila ada binari asli.
+pub fn desktop_executable(executables: &[String]) -> Option<String> {
+    let is_script = |name: &str| name.ends_with(".sh") || name.ends_with(".py");
+    executables
+        .iter()
+        .find(|name| name.to_lowercase().contains("gui") && !is_script(name))
+        .or_else(|| executables.iter().find(|name| !is_script(name)))
+        .or_else(|| executables.first())
+        .cloned()
+}
+
+/// Merender isi berkas `.desktop` minimal untuk arsip tanpa entri menu.
+///
+/// `workdir` diisi karena banyak aplikasi portable memuat berkas pendukung
+/// lewat path relatif (`./tool/...`), sehingga peluncur harus dijalankan dari
+/// direktorinya.
+fn render_desktop_entry(
+    pkgname: &str,
+    exec: &str,
+    comment: Option<&str>,
+    workdir: Option<&str>,
+) -> String {
+    let mut display = pkgname.trim_end_matches("-deb").replace(['-', '_'], " ");
+    if let Some(first) = display.get_mut(0..1) {
+        first.make_ascii_uppercase();
+    }
+    let terminal = exec.ends_with(".sh") || exec.ends_with(".py");
+    let comment = comment.unwrap_or("Installed from a tar archive by DebInstaller");
+    let path_line = workdir
+        .map(|dir| format!("Path={dir}\n"))
+        .unwrap_or_default();
+    format!(
+        "[Desktop Entry]\n\
+Type=Application\n\
+Name={display}\n\
+Comment={comment}\n\
+Exec={exec}\n\
+{path_line}\
+Icon=application-x-executable\n\
+Terminal={terminal}\n\
+Categories=Utility;\n\
+X-DebInstaller-Generated=true\n"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -623,6 +745,69 @@ mod tests {
         );
         assert_eq!(desktop_field(content, "Name").as_deref(), Some("App"));
         assert_eq!(desktop_field(content, "Icon"), None);
+    }
+
+    #[test]
+    fn skips_binaries_for_other_architectures() {
+        let entries = vec![
+            ("app".to_string(), "dir", 0, false),
+            ("app/VentoyGUI.x86_64".to_string(), "file", 10, true),
+            ("app/VentoyGUI.aarch64".to_string(), "file", 10, true),
+            ("app/VentoyGUI.i386".to_string(), "file", 10, true),
+            ("app/Ventoy2Disk.sh".to_string(), "file", 10, true),
+        ];
+        let names = detect_executables(&entries, Some("app"));
+        // Hanya varian yang cocok dengan host (x86_64 pada mesin uji) plus skrip.
+        assert!(names.contains(&"Ventoy2Disk.sh".to_string()));
+        if std::env::consts::ARCH == "x86_64" {
+            assert!(names.contains(&"VentoyGUI.x86_64".to_string()));
+            assert!(!names.contains(&"VentoyGUI.aarch64".to_string()));
+            assert!(!names.contains(&"VentoyGUI.i386".to_string()));
+        }
+    }
+
+    #[test]
+    fn picks_gui_binary_for_desktop_entry() {
+        let executables = vec![
+            "CreatePersistentImg.sh".to_string(),
+            "Ventoy2Disk.sh".to_string(),
+            "VentoyGUI.x86_64".to_string(),
+        ];
+        assert_eq!(
+            desktop_executable(&executables).as_deref(),
+            Some("VentoyGUI.x86_64")
+        );
+
+        // Tanpa nama bergaya GUI, binari non-skrip tetap dipilih.
+        let executables = vec!["run.sh".to_string(), "app".to_string()];
+        assert_eq!(desktop_executable(&executables).as_deref(), Some("app"));
+
+        // Hanya skrip: pakai yang pertama, dan entri menandai Terminal=true.
+        let executables = vec!["tool.sh".to_string()];
+        assert_eq!(desktop_executable(&executables).as_deref(), Some("tool.sh"));
+        assert!(render_desktop_entry("tool-deb", "tool.sh", None, None).contains("Terminal=true"));
+
+        assert_eq!(desktop_executable(&[]), None);
+    }
+
+    #[test]
+    fn renders_desktop_entry_with_readable_name() {
+        let entry = render_desktop_entry(
+            "my-app-deb",
+            "my-app",
+            Some("Does things"),
+            Some("/opt/my-app-deb"),
+        );
+        assert!(entry.contains("Name=My app\n"));
+        assert!(entry.contains("Exec=my-app\n"));
+        assert!(entry.contains("Comment=Does things\n"));
+        assert!(entry.contains("Path=/opt/my-app-deb\n"));
+        assert!(entry.contains("Terminal=false\n"));
+        assert!(entry.contains("X-DebInstaller-Generated=true\n"));
+
+        // Tanpa workdir, kunci Path tidak ditulis.
+        let entry = render_desktop_entry("x-deb", "x", None, None);
+        assert!(!entry.contains("Path="));
     }
 
     #[test]
