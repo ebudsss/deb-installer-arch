@@ -307,7 +307,7 @@ export function Installed({
                             </Button>
                           ) : (
                             <Button
-                              variant="subtle"
+                              variant="ghost"
                               size="sm"
                               onClick={() => void forget(record)}
                               title={t("installed.forget")}

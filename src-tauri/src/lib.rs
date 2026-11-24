@@ -97,7 +97,7 @@ fn default_level() -> i32 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
-    /// `id` atau `en`.
+    /// `en` (bawaan) atau `id`.
     #[serde(default = "default_language")]
     pub language: String,
     /// `system`, `light`, atau `dark`.
@@ -118,7 +118,7 @@ pub struct Settings {
 }
 
 fn default_language() -> String {
-    "id".to_string()
+    "en".to_string()
 }
 
 fn default_theme() -> String {

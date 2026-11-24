@@ -144,8 +144,8 @@ export function SettingsPage({
             value={draft.language}
             onChange={(language) => applyNow({ ...draft, language })}
             options={[
-              ["id", "Indonesia"],
               ["en", "English"],
+              ["id", "Indonesia"],
             ] as const}
           />
         </Row>
@@ -201,7 +201,7 @@ export function SettingsPage({
         <Row label={t("settings.refreshDb")} hint={t("settings.refreshHint")}>
           <Button variant="ghost" size="sm" onClick={refreshDb} disabled={refreshing}>
             {refreshing ? <Spinner size={12} /> : <IconRefresh size={13} />}
-            {refreshing ? t("settings.refreshing") : t("settings.refreshDb")}
+            {refreshing ? t("settings.refreshing") : t("settings.runNow")}
           </Button>
         </Row>
       </Section>
@@ -284,14 +284,14 @@ function Toggle({
       aria-checked={checked}
       aria-label={label}
       onClick={() => onChange(!checked)}
-      className={`relative h-5 w-9 rounded-full transition-colors duration-150 ${
+      className={`relative h-5 w-10 rounded-full transition-colors duration-150 ${
         checked ? "bg-[var(--accent)]" : "bg-[var(--border-strong)]"
       }`}
     >
       <span
         aria-hidden
         className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-150 ${
-          checked ? "translate-x-4" : "translate-x-0"
+          checked ? "translate-x-[1.25rem]" : "translate-x-0"
         }`}
       />
     </button>

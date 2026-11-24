@@ -92,9 +92,10 @@ export function Review({
 
       {blocking > 0 && !analysis.blocked ? (
         <Banner tone="warning">
-          {analysis.dep_summary.aur > 0 ? t("deps.warnAur") : null}
-          {analysis.dep_summary.aur > 0 && analysis.dep_summary.missing > 0 ? " " : null}
-          {analysis.dep_summary.missing > 0 ? t("deps.warnMissing") : null}
+          <ul className="space-y-0.5">
+            {analysis.dep_summary.aur > 0 ? <li>{t("deps.warnAur")}</li> : null}
+            {analysis.dep_summary.missing > 0 ? <li>{t("deps.warnMissing")}</li> : null}
+          </ul>
         </Banner>
       ) : null}
 

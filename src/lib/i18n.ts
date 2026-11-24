@@ -234,6 +234,7 @@ const strings = {
     "Mapping kustom digabung di atas tabel bawaan. Format TOML: [mapping] berisi pasangan nama Debian ke nama paket Arch, dan [ignored] berisi daftar nama yang diabaikan.",
     "Custom mapping is merged on top of the built-in table. TOML format: [mapping] holds Debian-name to Arch-package pairs, and [ignored] lists names to skip.",
   ],
+  "settings.runNow": ["Jalankan", "Run now"],
   "settings.refreshOk": ["Database file pacman diperbarui.", "pacman file database refreshed."],
   "settings.refreshFailed": [
     "Pembaruan dibatalkan atau gagal.",
@@ -278,9 +279,10 @@ export interface I18n {
   t: (key: StringKey) => string;
 }
 
+/** Bahasa Inggris adalah bawaan; Indonesia tersedia lewat Pengaturan. */
 export const I18nContext = createContext<I18n>({
-  lang: "id",
-  t: (key) => translate("id", key),
+  lang: "en",
+  t: (key) => translate("en", key),
 });
 
 export function useI18n(): I18n {

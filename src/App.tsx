@@ -20,7 +20,7 @@ type Screen =
 type NavId = "home" | "installed" | "settings";
 
 const DEFAULT_SETTINGS: Settings = {
-  language: "id",
+  language: "en",
   theme: "system",
   output_dir: null,
   keep_packages: true,
