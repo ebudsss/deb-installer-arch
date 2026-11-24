@@ -580,21 +580,75 @@ async fn uninstall_package(app: AppHandle, pkgname: String) -> Result<InstallOut
             })
             .map_err(err)?;
 
-        if outcome.success {
+        // `target not found` berarti paket sudah tidak terpasang — biasanya
+        // karena dihapus di luar aplikasi. Itu bukan kegagalan: catat saja.
+        let already_gone = outcome.diagnosis == Some(deb_installer_core::Diagnosis::TargetNotFound);
+
+        if outcome.success || already_gone {
             let mut history = History::load(&state::default_history_path()).unwrap_or_default();
             if history.mark_uninstalled(&pkgname, state::now_secs()) {
                 let _ = history.save(&state::default_history_path());
             }
         }
+
+        if already_gone {
+            let message = format!("{pkgname} sudah tidak terpasang; catatan riwayat diperbarui.");
+            let _ = app.emit("install-log", message.clone());
+            return Ok(InstallOutcome {
+                success: true,
+                diagnosis: None,
+                diagnosis_message: Some(message),
+                ..outcome
+            });
+        }
+
         Ok(outcome)
     })
     .await
     .map_err(|e| format!("tugas penghapusan gagal: {e}"))?
 }
 
+/// Nama semua paket yang benar-benar terpasang menurut pacman.
+/// Satu panggilan untuk seluruh daftar, bukan satu per paket.
+fn installed_package_names() -> Option<std::collections::HashSet<String>> {
+    let output = std::process::Command::new("pacman")
+        .args(["-Qq"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|line| line.trim().to_string())
+            .filter(|line| !line.is_empty())
+            .collect(),
+    )
+}
+
+/// Menyelaraskan riwayat dengan kenyataan pacman.
+///
+/// Riwayat bisa basi bila paket dihapus di luar aplikasi (`pacman -R`,
+/// pembaruan sistem, atau percobaan manual). Tanpa ini, GUI menampilkan
+/// paket sebagai "terpasang" padahal sudah tidak ada, dan tombol hapus
+/// gagal dengan pesan pacman yang membingungkan.
+fn reconcile_history(history: &mut History) -> bool {
+    let Some(installed) = installed_package_names() else {
+        // pacman tidak tersedia: jangan mengubah apa pun.
+        return false;
+    };
+    history.reconcile(&installed, state::now_secs())
+}
+
 #[tauri::command]
 fn list_installed() -> Result<Vec<InstallRecord>, String> {
-    let history = History::load(&state::default_history_path()).map_err(err)?;
+    let mut history = History::load(&state::default_history_path()).map_err(err)?;
+    if reconcile_history(&mut history) {
+        if let Err(e) = history.save(&state::default_history_path()) {
+            eprintln!("peringatan: riwayat tidak tersimpan: {e}");
+        }
+    }
     let mut records = history.records.clone();
     records.sort_by_key(|record| std::cmp::Reverse(record.converted_at));
     Ok(records)

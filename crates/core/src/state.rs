@@ -79,6 +79,25 @@ impl History {
         }
     }
 
+    /// Menyelaraskan catatan "terpasang" dengan daftar paket yang benar-benar
+    /// ada di sistem. Mengembalikan `true` bila ada yang berubah.
+    ///
+    /// Riwayat bisa basi bila paket dihapus di luar aplikasi (`pacman -R`,
+    /// pembaruan sistem). Catatan yang sudah ditandai dihapus tidak diubah.
+    pub fn reconcile(&mut self, installed: &std::collections::HashSet<String>, at: i64) -> bool {
+        let mut changed = false;
+        for record in &mut self.records {
+            if record.installed_at.is_some()
+                && record.uninstalled_at.is_none()
+                && !installed.contains(&record.pkgname)
+            {
+                record.uninstalled_at = Some(at);
+                changed = true;
+            }
+        }
+        changed
+    }
+
     pub fn find(&self, pkgname: &str) -> Option<&InstallRecord> {
         self.records.iter().find(|r| r.pkgname == pkgname)
     }
@@ -181,6 +200,41 @@ mod tests {
         history.add(newer);
         assert_eq!(history.records.len(), 1);
         assert_eq!(history.records[0].pkgver, "2.0-1");
+    }
+
+    #[test]
+    fn reconcile_marks_vanished_packages_as_removed() {
+        use std::collections::HashSet;
+
+        let mut history = History::default();
+        history.add(sample("present-deb"));
+        history.add(sample("vanished-deb"));
+        history.mark_installed("present-deb", 100);
+        history.mark_installed("vanished-deb", 100);
+
+        let installed: HashSet<String> = ["present-deb".to_string()].into_iter().collect();
+        assert!(history.reconcile(&installed, 500));
+
+        assert!(history.find("present-deb").unwrap().is_installed());
+        let vanished = history.find("vanished-deb").unwrap();
+        assert!(!vanished.is_installed());
+        assert_eq!(vanished.uninstalled_at, Some(500));
+
+        // Tidak ada perubahan kedua kali.
+        assert!(!history.reconcile(&installed, 600));
+    }
+
+    #[test]
+    fn reconcile_keeps_converted_but_never_installed_records() {
+        use std::collections::HashSet;
+
+        let mut history = History::default();
+        history.add(sample("converted-only-deb"));
+        // Belum pernah dipasang: tidak boleh ditandai "dihapus".
+        assert!(!history.reconcile(&HashSet::new(), 700));
+        let record = history.find("converted-only-deb").unwrap();
+        assert!(record.installed_at.is_none());
+        assert!(record.uninstalled_at.is_none());
     }
 
     #[test]
