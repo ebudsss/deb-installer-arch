@@ -34,7 +34,11 @@ export function Review({
             </h1>
             <Pill tone="neutral">{analysis.version}</Pill>
             <Pill tone="accent">{analysis.arch}</Pill>
-            <RiskBadge risk={analysis.max_risk} />
+            {analysis.kind === "archive" ? (
+              <Pill tone="warning">{t("archive.badge")}</Pill>
+            ) : (
+              <RiskBadge risk={analysis.max_risk} />
+            )}
           </div>
           <p className="mt-1 line-clamp-2 max-w-xl text-[13px] leading-relaxed text-[var(--muted)]">
             {analysis.description.split("\n")[0]}
@@ -150,53 +154,98 @@ function InfoTab({ analysis }: { analysis: Analysis }) {
   const { t } = useI18n();
   return (
     <div className="space-y-5">
-      <dl className="divide-y divide-[var(--border)]/70">
-        <Row label={t("info.package")}>{analysis.package}</Row>
-        <Row label={t("info.version")}>{analysis.version}</Row>
-        <Row label={t("info.arch")}>
-          {analysis.arch} → {analysis.arch_mapped}
-        </Row>
-        <Row label={t("info.pkgname")}>
-          <code>{analysis.suggested_pkgname}</code>
-        </Row>
-        <Row label={t("info.maintainer")}>{analysis.maintainer || "—"}</Row>
-        {analysis.homepage ? (
-          <Row label={t("info.homepage")}>
-            <a className="text-[var(--accent)] hover:underline" href={analysis.homepage} target="_blank" rel="noreferrer">
-              {analysis.homepage}
-            </a>
+      {analysis.kind === "archive" ? (
+        <div className="space-y-3">
+          <dl className="divide-y divide-[var(--border)]/70">
+            <Row label={t("info.package")}>{analysis.package}</Row>
+            <Row label={t("info.version")}>{analysis.version}</Row>
+            <Row label={t("info.pkgname")}>
+              <code>{analysis.suggested_pkgname}</code>
+            </Row>
+            <Row label={t("archive.layout")}>
+              {analysis.layout?.kind === "system"
+                ? t("archive.layout.system")
+                : t("archive.layout.portable").replace("{pkg}", analysis.suggested_pkgname)}
+            </Row>
+            <Row label={t("info.fileSize")}>{formatBytes(analysis.file_size)}</Row>
+            <Row label={t("info.installedSize")}>{formatBytes(analysis.installed_size)}</Row>
+            <Row label={t("info.fileCount")}>{analysis.file_count}</Row>
+            <Row label={t("info.sha256")}>
+              <code className="break-all font-mono text-[11px] text-[var(--muted)]">
+                {analysis.sha256}
+              </code>
+            </Row>
+          </dl>
+          <Banner
+            tone={analysis.executables.length > 0 ? "info" : "warning"}
+            title={t("archive.executables")}
+          >
+            {analysis.executables.length > 0 ? (
+              <ul className="mt-1 flex flex-wrap gap-1.5">
+                {analysis.executables.map((name) => (
+                  <li key={name}>
+                    <code className="rounded bg-[var(--surface-2)] px-1.5 py-0.5 text-[11px]">
+                      /usr/bin/{name}
+                    </code>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-1">{t("archive.noExecutables")}</p>
+            )}
+          </Banner>
+        </div>
+      ) : (
+        <>
+          <dl className="divide-y divide-[var(--border)]/70">
+            <Row label={t("info.package")}>{analysis.package}</Row>
+          <Row label={t("info.version")}>{analysis.version}</Row>
+          <Row label={t("info.arch")}>
+            {analysis.arch} → {analysis.arch_mapped}
           </Row>
-        ) : null}
-        <Row label={t("info.fileSize")}>{formatBytes(analysis.file_size)}</Row>
-        <Row label={t("info.installedSize")}>{formatBytes(analysis.installed_size)}</Row>
-        <Row label={t("info.fileCount")}>{analysis.file_count}</Row>
-        <Row label={t("info.dataMember")}>
-          <code>{analysis.data_member}</code>
-        </Row>
-        <Row label={t("info.sha256")}>
-          <code className="break-all font-mono text-[11px] text-[var(--muted)]">{analysis.sha256}</code>
-        </Row>
-      </dl>
+          <Row label={t("info.pkgname")}>
+            <code>{analysis.suggested_pkgname}</code>
+          </Row>
+          <Row label={t("info.maintainer")}>{analysis.maintainer || "—"}</Row>
+          {analysis.homepage ? (
+            <Row label={t("info.homepage")}>
+              <a className="text-[var(--accent)] hover:underline" href={analysis.homepage} target="_blank" rel="noreferrer">
+                {analysis.homepage}
+              </a>
+            </Row>
+          ) : null}
+          <Row label={t("info.fileSize")}>{formatBytes(analysis.file_size)}</Row>
+          <Row label={t("info.installedSize")}>{formatBytes(analysis.installed_size)}</Row>
+          <Row label={t("info.fileCount")}>{analysis.file_count}</Row>
+          <Row label={t("info.dataMember")}>
+            <code>{analysis.data_member}</code>
+          </Row>
+          <Row label={t("info.sha256")}>
+            <code className="break-all font-mono text-[11px] text-[var(--muted)]">{analysis.sha256}</code>
+          </Row>
+        </dl>
 
-      {analysis.alternatives.length > 0 ? (
-        <Banner tone="info" title={t("info.alternatives")}>
-          <p className="mb-2">{t("info.alternativesHint")}</p>
-          <ul className="space-y-1">
-            {analysis.alternatives.map((alt) => (
-              <li key={`${alt.source}-${alt.name}`} className="flex flex-wrap items-center gap-2">
-                <code>{alt.name}</code>
-                <Pill tone={alt.source === "Repo" ? "success" : "warning"}>
-                  {alt.source === "Repo" ? "repo" : "AUR"}
-                </Pill>
-                {alt.version ? <span className="text-xs">{alt.version}</span> : null}
-                {alt.description ? (
-                  <span className="text-xs text-[var(--muted)]">{alt.description}</span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </Banner>
-      ) : null}
+        {analysis.alternatives.length > 0 ? (
+          <Banner tone="info" title={t("info.alternatives")}>
+            <p className="mb-2">{t("info.alternativesHint")}</p>
+            <ul className="space-y-1">
+              {analysis.alternatives.map((alt) => (
+                <li key={`${alt.source}-${alt.name}`} className="flex flex-wrap items-center gap-2">
+                  <code>{alt.name}</code>
+                  <Pill tone={alt.source === "Repo" ? "success" : "warning"}>
+                    {alt.source === "Repo" ? "repo" : "AUR"}
+                  </Pill>
+                  {alt.version ? <span className="text-xs">{alt.version}</span> : null}
+                  {alt.description ? (
+                    <span className="text-xs text-[var(--muted)]">{alt.description}</span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </Banner>
+            ) : null}
+        </>
+      )}
     </div>
   );
 }
@@ -205,7 +254,11 @@ function DepsTab({ analysis }: { analysis: Analysis }) {
   const { t } = useI18n();
   const { dep_summary: summary } = analysis;
   if (analysis.deps.length === 0) {
-    return <p className="text-[var(--muted)]">{t("deps.allClear")}</p>;
+    return (
+      <p className="text-[var(--muted)]">
+        {analysis.kind === "archive" ? t("archive.noDeps") : t("deps.allClear")}
+      </p>
+    );
   }
   return (
     <div className="space-y-3">
@@ -319,7 +372,9 @@ function ScriptsTab({ analysis }: { analysis: Analysis }) {
   return (
     <div className="space-y-5">
       {findings.length === 0 ? (
-        <p className="text-[var(--muted)]">{t("scripts.none")}</p>
+        <p className="text-[var(--muted)]">
+          {analysis.kind === "archive" ? t("archive.noScripts") : t("scripts.none")}
+        </p>
       ) : (
         <ul className="space-y-2">
           {findings.map((finding, index) => (

@@ -103,10 +103,7 @@ impl DebPackage {
         let path = path.as_ref().to_path_buf();
         let meta = std::fs::metadata(&path)?;
         if !meta.is_file() {
-            return Err(Error::Other(format!(
-                "{} bukan file biasa",
-                path.display()
-            )));
+            return Err(Error::Other(format!("{} bukan file biasa", path.display())));
         }
 
         let mut file = BufReader::new(std::fs::File::open(&path)?);
@@ -132,10 +129,7 @@ impl DebPackage {
         let data_compression = Self::detect_member_compression(&path, &data_entry)
             .or_else(|| Compression::from_name(&data_entry.name))
             .ok_or_else(|| {
-                Error::UnsupportedArchive(format!(
-                    "kompresi `{}` tidak dikenal",
-                    data_entry.name
-                ))
+                Error::UnsupportedArchive(format!("kompresi `{}` tidak dikenal", data_entry.name))
             })?;
 
         let sha256 = hash_file(&path)?;
@@ -342,8 +336,10 @@ mod tests {
             out.write_all(format!("{:<12}", 0).as_bytes()).unwrap();
             out.write_all(format!("{:<6}", 0).as_bytes()).unwrap();
             out.write_all(format!("{:<6}", 0).as_bytes()).unwrap();
-            out.write_all(format!("{:<8}", 0o100644).as_bytes()).unwrap();
-            out.write_all(format!("{:<10}", data.len()).as_bytes()).unwrap();
+            out.write_all(format!("{:<8}", 0o100644).as_bytes())
+                .unwrap();
+            out.write_all(format!("{:<10}", data.len()).as_bytes())
+                .unwrap();
             out.write_all(b"`\n").unwrap();
             out.write_all(data).unwrap();
             if data.len() % 2 == 1 {

@@ -7,6 +7,7 @@
 //! meminta hak akses lewat `pkexec`.
 
 pub mod ar;
+pub mod archive;
 pub mod control;
 pub mod deb;
 pub mod deps;
@@ -19,6 +20,7 @@ pub mod scripts;
 pub mod security;
 pub mod state;
 
+pub use archive::{ArchiveLayout, ArchivePackage};
 pub use control::Control;
 pub use deb::DebPackage;
 pub use deps::{

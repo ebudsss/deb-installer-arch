@@ -53,6 +53,26 @@ in Settings → Language.
 - **Conversion history** with uninstall and forget actions.
 - **Two languages** (English, Indonesian) and light/dark themes.
 
+## Tar archive support
+
+As an extra, DebInstaller also accepts **tar archives**: `.tar.gz`, `.tgz`,
+`.tar.xz`, `.txz`, `.tar.zst`, `.tzst`. They are wrapped into a pacman package so
+they install, upgrade, and uninstall like anything else.
+
+Archives carry no metadata, so the name and version are taken from the filename
+(`omniget-1.0.1-linux-x64.tar.gz` → `omniget` `1.0.1`) and the layout is detected
+from the contents:
+
+| Layout | Detected when | Result |
+|---|---|---|
+| **System** | The archive already has `usr/`, `opt/`, `etc/`, `var/`, `bin/`, `lib/` at its root | Installed as-is after path normalization |
+| **Portable** | Everything sits under one directory, or the archive is flat | Contents go to `/opt/<pkg>-deb/`, executables in `bin/` (and at the root) are symlinked into `/usr/bin`, and any `.desktop` file is moved to `/usr/share/applications` |
+
+Both layouts go through the same safety checks as `.deb`: protected paths are
+refused, and the resulting package carries `.PKGINFO`, `.MTREE`, and the `-deb`
+suffix. Archives have no dependency metadata or maintainer scripts, so those tabs
+explain that rather than showing an empty table.
+
 ## Architecture
 
 ```
@@ -140,6 +160,9 @@ deb-installer-cli install   ./out/package-deb-1.0-1-x86_64.pkg.tar.zst
 deb-installer-cli uninstall package-deb
 deb-installer-cli history
 ```
+
+Archive files work with the same subcommands; `info` and `build` detect them by
+extension.
 
 All subcommands accept `--json` except `files`, `scripts`, and
 `install`/`uninstall`.

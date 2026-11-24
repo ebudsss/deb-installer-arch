@@ -439,9 +439,9 @@ impl<Q: PackageQuery> DepMapper<Q> {
                 for alt in &rel.alternatives {
                     match self.table.lookup(&alt.name) {
                         Some(MappingEntry::Simple(arch)) => candidates.push(arch.clone()),
-                        Some(MappingEntry::Detailed { arch, aur: true, .. }) => {
-                            candidates.push(arch.clone())
-                        }
+                        Some(MappingEntry::Detailed {
+                            arch, aur: true, ..
+                        }) => candidates.push(arch.clone()),
                         Some(MappingEntry::Detailed { .. }) | None => {
                             candidates.push(alt.name.clone())
                         }
@@ -630,7 +630,8 @@ impl<Q: PackageQuery> DepMapper<Q> {
         }
 
         // 4. Tidak ditemukan.
-        let mut note = String::from("tidak ada padanan otomatis; pilih paket Arch secara manual atau abaikan");
+        let mut note =
+            String::from("tidak ada padanan otomatis; pilih paket Arch secara manual atau abaikan");
         if self.allow_network {
             if let Some(aur) = self.query.aur_info(&name) {
                 note = format!("tersedia di AUR sebagai `{}`", aur.name);
@@ -823,7 +824,11 @@ mod tests {
     #[test]
     fn builtin_mapping_loads_and_is_large() {
         let table = MappingTable::builtin();
-        assert!(table.len() > 100, "mapping bawaan terlalu kecil: {}", table.len());
+        assert!(
+            table.len() > 100,
+            "mapping bawaan terlalu kecil: {}",
+            table.len()
+        );
         assert!(table.is_ignored("dpkg"));
     }
 
@@ -922,12 +927,18 @@ mod tests {
 
     #[test]
     fn soname_guessing() {
-        assert_eq!(soname_from_package("libnss3").as_deref(), Some("libnss.so.3"));
+        assert_eq!(
+            soname_from_package("libnss3").as_deref(),
+            Some("libnss.so.3")
+        );
         assert_eq!(
             soname_from_package("libavcodec60").as_deref(),
             Some("libavcodec.so.60")
         );
-        assert_eq!(soname_from_package("libgtk-3-0").as_deref(), Some("libgtk-3-.so.0"));
+        assert_eq!(
+            soname_from_package("libgtk-3-0").as_deref(),
+            Some("libgtk-3-.so.0")
+        );
         assert_eq!(soname_from_package("zlib1g"), None);
         assert_eq!(soname_from_package("libc6"), Some("libc.so.6".into()));
     }

@@ -108,7 +108,8 @@ pub fn diagnose(log: &[String]) -> Diagnosis {
     {
         return Diagnosis::NotAuthorized;
     }
-    if text.contains("signature") && (text.contains("is invalid") || text.contains("unknown trust")) {
+    if text.contains("signature") && (text.contains("is invalid") || text.contains("unknown trust"))
+    {
         return Diagnosis::SignatureError;
     }
     if text.contains("invalid or corrupted package")
@@ -210,19 +211,13 @@ impl PacmanInstaller {
             ));
         }
         if Path::new("/var/lib/pacman/db.lck").exists() {
-            return Err(Error::Install(
-                Diagnosis::DatabaseLocked.message(),
-            ));
+            return Err(Error::Install(Diagnosis::DatabaseLocked.message()));
         }
         Ok(())
     }
 
     /// Memasang paket hasil konversi, meneruskan setiap baris log ke `on_line`.
-    pub fn install(
-        &self,
-        package: &Path,
-        on_line: &mut dyn FnMut(&str),
-    ) -> Result<InstallOutcome> {
+    pub fn install(&self, package: &Path, on_line: &mut dyn FnMut(&str)) -> Result<InstallOutcome> {
         self.preflight(package)?;
         let args = vec![
             "-U".to_string(),
@@ -234,7 +229,11 @@ impl PacmanInstaller {
     }
 
     /// Menghapus paket beserta dependensi yang tidak lagi dipakai.
-    pub fn uninstall(&self, pkgname: &str, on_line: &mut dyn FnMut(&str)) -> Result<InstallOutcome> {
+    pub fn uninstall(
+        &self,
+        pkgname: &str,
+        on_line: &mut dyn FnMut(&str),
+    ) -> Result<InstallOutcome> {
         if pkgname.trim().is_empty() {
             return Err(Error::Install("nama paket kosong".into()));
         }
@@ -252,7 +251,12 @@ impl PacmanInstaller {
         Command::new(&self.pacman)
             .args(["-Qq", pkgname])
             .output()
-            .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).lines().any(|l| l.trim() == pkgname))
+            .map(|o| {
+                o.status.success()
+                    && String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .any(|l| l.trim() == pkgname)
+            })
             .unwrap_or(false)
     }
 
@@ -342,7 +346,11 @@ impl PacmanInstaller {
             return Ok(outcome);
         }
 
-        Ok(InstallOutcome::from_log(status.success(), status.code(), log))
+        Ok(InstallOutcome::from_log(
+            status.success(),
+            status.code(),
+            log,
+        ))
     }
 }
 
@@ -389,7 +397,9 @@ mod tests {
             Diagnosis::DatabaseLocked
         );
         assert_eq!(
-            diagnose(&lines(&["Error executing command as another user: Not authorized"])),
+            diagnose(&lines(&[
+                "Error executing command as another user: Not authorized"
+            ])),
             Diagnosis::NotAuthorized
         );
         assert_eq!(
@@ -410,7 +420,10 @@ mod tests {
             diagnose(&lines(&["error: invalid or corrupted package (checksum)"])),
             Diagnosis::InvalidPackage
         );
-        assert_eq!(diagnose(&lines(&["everything exploded"])), Diagnosis::Unknown);
+        assert_eq!(
+            diagnose(&lines(&["everything exploded"])),
+            Diagnosis::Unknown
+        );
     }
 
     #[test]
@@ -433,7 +446,9 @@ mod tests {
         let installer = PacmanInstaller::new();
         let err = installer.preflight(&file).unwrap_err();
         assert!(matches!(err, Error::Install(_)));
-        assert!(installer.preflight(&dir.path().join("missing.pkg.tar.zst")).is_err());
+        assert!(installer
+            .preflight(&dir.path().join("missing.pkg.tar.zst"))
+            .is_err());
     }
 
     #[test]
@@ -464,7 +479,10 @@ mod tests {
             .unwrap();
         assert!(!outcome.success);
         assert_eq!(outcome.diagnosis, Some(Diagnosis::NotAuthorized));
-        assert!(outcome.diagnosis_message.unwrap().contains("tidak merespons"));
+        assert!(outcome
+            .diagnosis_message
+            .unwrap()
+            .contains("tidak merespons"));
         assert!(lines.iter().any(|l| l.contains("tidak merespons")));
     }
 
@@ -472,10 +490,7 @@ mod tests {
     fn describe_shows_polkit_prefix() {
         let mut installer = PacmanInstaller::new();
         let args = vec!["-U".to_string(), "x.pkg.tar.zst".to_string()];
-        assert_eq!(
-            installer.describe(&args),
-            "pkexec pacman -U x.pkg.tar.zst"
-        );
+        assert_eq!(installer.describe(&args), "pkexec pacman -U x.pkg.tar.zst");
         installer.use_polkit = false;
         assert_eq!(installer.describe(&args), "pacman -U x.pkg.tar.zst");
     }

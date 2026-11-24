@@ -66,8 +66,16 @@ export interface Alternative {
   description: string | null;
 }
 
+export type ArchiveLayout = { kind: "system" } | { kind: "portable"; root: string | null };
+
 export interface Analysis {
   path: string;
+  /** `deb` untuk paket Debian, `archive` untuk arsip tar. */
+  kind: "deb" | "archive";
+  /** Tata letak arsip; null untuk `.deb`. */
+  layout: ArchiveLayout | null;
+  /** Binari yang ditautkan ke /usr/bin (arsip portable). */
+  executables: string[];
   package: string;
   version: string;
   arch: string;

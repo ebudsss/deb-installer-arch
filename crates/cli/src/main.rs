@@ -1,6 +1,7 @@
 //! CLI `deb-installer`: alat uji dan otomasi untuk konversi `.deb` → pacman.
 
 use clap::{Parser, Subcommand};
+use deb_installer_core::archive::{self, ArchiveLayout, ArchivePackage};
 use deb_installer_core::control::VersionOp;
 use deb_installer_core::deb::{DebPackage, FileKind};
 use deb_installer_core::deps::{DepMapper, MappingTable, SystemPacman};
@@ -119,6 +120,11 @@ fn run(cli: Cli) -> deb_installer_core::Result<()> {
     }
 }
 
+/// Apakah path adalah arsip tar yang didukung (fitur tambahan).
+fn is_archive(path: &Path) -> bool {
+    archive::compression_for(path).is_ok()
+}
+
 fn human_size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
     let mut value = bytes as f64;
@@ -135,6 +141,9 @@ fn human_size(bytes: u64) -> String {
 }
 
 fn cmd_info(path: &Path, json: bool) -> deb_installer_core::Result<()> {
+    if is_archive(path) {
+        return archive_info(path, json);
+    }
     let deb = DebPackage::open(path)?;
     let entries = deb.data_entries()?;
     let installed_size: u64 = entries
@@ -182,7 +191,10 @@ fn cmd_info(path: &Path, json: bool) -> deb_installer_core::Result<()> {
     if scripts.is_empty() {
         println!("Script      : (tidak ada)");
     } else {
-        println!("Script      : {}", scripts.keys().cloned().collect::<Vec<_>>().join(", "));
+        println!(
+            "Script      : {}",
+            scripts.keys().cloned().collect::<Vec<_>>().join(", ")
+        );
     }
     Ok(())
 }
@@ -208,10 +220,15 @@ fn cmd_files(path: &Path) -> deb_installer_core::Result<()> {
     if !sensitive.is_empty() {
         println!("\nPath sensitif:");
         for hit in sensitive {
-            println!("  [{}] {} — {}", match hit.level {
-                security::Sensitivity::Forbidden => "DITOLAK",
-                security::Sensitivity::Warning => "PERINGATAN",
-            }, hit.path, hit.reason);
+            println!(
+                "  [{}] {} — {}",
+                match hit.level {
+                    security::Sensitivity::Forbidden => "DITOLAK",
+                    security::Sensitivity::Warning => "PERINGATAN",
+                },
+                hit.path,
+                hit.reason
+            );
         }
     }
     Ok(())
@@ -263,8 +280,14 @@ fn cmd_deps(
         );
     }
 
-    let blocking = resolutions.iter().filter(|r| r.status.is_blocking()).count();
-    println!("\n{} dependensi, {blocking} perlu perhatian", resolutions.len());
+    let blocking = resolutions
+        .iter()
+        .filter(|r| r.status.is_blocking())
+        .count();
+    println!(
+        "\n{} dependensi, {blocking} perlu perhatian",
+        resolutions.len()
+    );
     let _ = VersionOp::Eq;
     Ok(())
 }
@@ -312,6 +335,9 @@ fn cmd_build(
     level: i32,
     json: bool,
 ) -> deb_installer_core::Result<()> {
+    if is_archive(path) {
+        return archive_build(path, output, staging, level, json);
+    }
     let deb = DebPackage::open(path)?;
     let table = MappingTable::builtin();
     let mut mapper = DepMapper::new(table, SystemPacman::new());
@@ -483,6 +509,110 @@ fn parse_pkgname_from_filename(path: &Path) -> Option<String> {
     Some(parts[..parts.len() - 3].join("-"))
 }
 
+fn archive_info(path: &Path, json: bool) -> deb_installer_core::Result<()> {
+    let pkg = ArchivePackage::open(path)?;
+    let info = serde_json::json!({
+        "kind": "archive",
+        "package": pkg.name,
+        "version": pkg.version,
+        "layout": pkg.layout,
+        "suggested_pkgname": pkg.suggested_pkgname(),
+        "description": pkg.description,
+        "file_size": pkg.file_size,
+        "sha256": pkg.sha256,
+        "file_count": pkg.entries.len(),
+        "executables": pkg.executables,
+    });
+    if json {
+        println!("{}", serde_json::to_string_pretty(&info)?);
+        return Ok(());
+    }
+    println!("Arsip       : {}", path.display());
+    println!("Nama        : {}", pkg.name);
+    println!("Versi       : {}", pkg.version);
+    println!("Tata letak  : {}", pkg.layout.label());
+    if let ArchiveLayout::Portable { root } = &pkg.layout {
+        match root {
+            Some(root) => println!("Akar arsip  : {root}/"),
+            None => println!("Akar arsip  : (berkas lepas)"),
+        }
+    }
+    println!("Paket Arch  : {}", pkg.suggested_pkgname());
+    if let Some(desc) = &pkg.description {
+        println!("Deskripsi   : {desc}");
+    }
+    println!("Ukuran file : {}", human_size(pkg.file_size));
+    println!("SHA256      : {}", pkg.sha256);
+    println!("Jumlah entri: {}", pkg.entries.len());
+    if !pkg.executables.is_empty() {
+        println!("Binari      : {}", pkg.executables.join(", "));
+    }
+    Ok(())
+}
+
+fn archive_build(
+    path: &Path,
+    output: &Path,
+    staging: Option<PathBuf>,
+    level: i32,
+    json: bool,
+) -> deb_installer_core::Result<()> {
+    let pkg = ArchivePackage::open(path)?;
+    let mut _temp = None;
+    let staging_dir = match staging {
+        Some(dir) => dir,
+        None => {
+            let dir = tempfile::tempdir()?;
+            let path = dir.path().join("stage");
+            _temp = Some(dir);
+            path
+        }
+    };
+
+    let mut options = BuildOptions::new(staging_dir, output);
+    options.compression_level = level.clamp(1, 22);
+    let result = pkg.build(&options)?;
+
+    let mut history = History::load(&state::default_history_path()).unwrap_or_default();
+    history.add(InstallRecord {
+        id: state::record_id(&pkg.name, &pkg.sha256),
+        deb_name: pkg.name.clone(),
+        deb_version: pkg.version.clone(),
+        deb_path: std::fs::canonicalize(path)
+            .unwrap_or_else(|_| path.to_path_buf())
+            .to_string_lossy()
+            .to_string(),
+        deb_sha256: pkg.sha256.clone(),
+        pkgname: result.pkgname.clone(),
+        pkgver: result.full_version(),
+        package_path: result.package_path.to_string_lossy().to_string(),
+        converted_at: state::now_secs(),
+        installed_at: None,
+        uninstalled_at: None,
+    });
+    if let Err(e) = history.save(&state::default_history_path()) {
+        eprintln!("peringatan: riwayat tidak tersimpan: {e}");
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+        return Ok(());
+    }
+    println!("Paket       : {}", result.pkgname);
+    println!("Versi       : {}", result.full_version());
+    println!("Arsitektur  : {}", result.arch);
+    println!("Berkas      : {}", result.file_count);
+    println!("Ukuran      : {}", human_size(result.installed_size));
+    println!("Hasil       : {}", result.package_path.display());
+    for note in &result.notes {
+        println!("Catatan     : {note}");
+    }
+    for warning in &result.warnings {
+        println!("Peringatan  : {} — {}", warning.path, warning.reason);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,7 +620,8 @@ mod tests {
     #[test]
     fn parses_package_name_from_filename() {
         assert_eq!(
-            parse_pkgname_from_filename(Path::new("code-deb-1.90.0-1-x86_64.pkg.tar.zst")).as_deref(),
+            parse_pkgname_from_filename(Path::new("code-deb-1.90.0-1-x86_64.pkg.tar.zst"))
+                .as_deref(),
             Some("code-deb")
         );
         assert_eq!(

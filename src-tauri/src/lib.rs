@@ -1,5 +1,6 @@
 //! Backend Tauri: menjembatani UI dengan `deb-installer-core`.
 
+use deb_installer_core::archive::{self, ArchiveLayout, ArchivePackage};
 use deb_installer_core::deb::{DebPackage, FileKind};
 use deb_installer_core::deps::{
     Alternative, DepMapper, DepResolution, DepStatus, MappingTable, SystemPacman,
@@ -63,6 +64,12 @@ pub struct Analysis {
     pub alternatives: Vec<Alternative>,
     /// Konversi ditolak karena menyentuh path sistem yang dilindungi.
     pub blocked: bool,
+    /// `deb` atau `archive`. Arsip adalah fitur tambahan.
+    pub kind: &'static str,
+    /// Tata letak arsip; `None` untuk `.deb`.
+    pub layout: Option<ArchiveLayout>,
+    /// Binari yang akan ditautkan ke /usr/bin (arsip portable).
+    pub executables: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -172,6 +179,9 @@ fn kind_label(kind: FileKind) -> &'static str {
 }
 
 fn analyze_inner(path: &Path, settings: &Settings) -> Result<Analysis, String> {
+    if archive::compression_for(path).is_ok() {
+        return analyze_archive(path);
+    }
     let deb = DebPackage::open(path).map_err(err)?;
     let entries = deb.data_entries().map_err(err)?;
 
@@ -270,15 +280,104 @@ fn analyze_inner(path: &Path, settings: &Settings) -> Result<Analysis, String> {
         max_risk,
         alternatives,
         blocked,
+        kind: "deb",
+        layout: None,
+        executables: Vec::new(),
     })
 }
 
-/// Path `.deb` yang diberikan lewat argumen CLI / asosiasi berkas.
+/// Analisis arsip tar: tanpa dependensi dan tanpa script maintainer.
+fn analyze_archive(path: &Path) -> Result<Analysis, String> {
+    let pkg = ArchivePackage::open(path).map_err(err)?;
+
+    let mut views = Vec::with_capacity(pkg.entries.len().min(MAX_ENTRIES));
+    let mut sensitive = Vec::new();
+    let mut forbidden = false;
+    let mut installed_size = 0u64;
+    let mut file_count = 0usize;
+
+    for entry in &pkg.entries {
+        if entry.kind == "file" {
+            installed_size += entry.size;
+            file_count += 1;
+        }
+        // Path arsip dipetakan sama seperti saat konversi agar peringatan
+        // yang ditampilkan cocok dengan yang akan ditolak backend.
+        let shown = match &pkg.layout {
+            ArchiveLayout::System => format!("/{}", entry.path),
+            ArchiveLayout::Portable { root } => {
+                let stripped = match root {
+                    Some(root) => entry
+                        .path
+                        .strip_prefix(&format!("{root}/"))
+                        .unwrap_or(&entry.path)
+                        .to_string(),
+                    None => entry.path.clone(),
+                };
+                format!("/opt/{}/{}", pkg.suggested_pkgname(), stripped)
+            }
+        };
+        if let Some(hit) = security::check_path(&shown) {
+            if hit.level == security::Sensitivity::Forbidden {
+                forbidden = true;
+            }
+            sensitive.push(hit);
+        }
+        if views.len() < MAX_ENTRIES {
+            views.push(EntryView {
+                path: shown,
+                original: entry.path.clone(),
+                kind: entry.kind,
+                size: entry.size,
+                link_target: None,
+            });
+        }
+    }
+
+    Ok(Analysis {
+        path: std::fs::canonicalize(path)
+            .unwrap_or_else(|_| path.to_path_buf())
+            .to_string_lossy()
+            .to_string(),
+        package: pkg.name.clone(),
+        version: pkg.version.clone(),
+        arch: "amd64".to_string(),
+        arch_mapped: pkgbuild::convert_arch("amd64"),
+        suggested_pkgname: pkg.suggested_pkgname(),
+        description: pkg.description.clone().unwrap_or_default(),
+        maintainer: String::new(),
+        homepage: String::new(),
+        file_size: pkg.file_size,
+        installed_size,
+        sha256: pkg.sha256.clone(),
+        data_member: "tar".to_string(),
+        file_count,
+        entries_truncated: pkg.entries.len() > views.len(),
+        entries: views,
+        sensitive,
+        deps: Vec::new(),
+        dep_summary: DepSummary::default(),
+        scripts: ScriptReport::default(),
+        install_script: None,
+        max_risk: Risk::Safe,
+        alternatives: Vec::new(),
+        blocked: forbidden,
+        kind: "archive",
+        layout: Some(pkg.layout.clone()),
+        executables: pkg.executables.clone(),
+    })
+}
+
+/// Berkas yang bisa dibuka: `.deb` atau arsip tar.
+fn is_supported_path(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    lower.ends_with(".deb") || archive::compression_for(Path::new(path)).is_ok()
+}
+
+/// Path `.deb` atau arsip yang diberikan lewat argumen CLI / asosiasi berkas.
 #[tauri::command]
 fn initial_file() -> Option<String> {
-    std::env::args()
-        .skip(1)
-        .find(|arg| arg.to_lowercase().ends_with(".deb"))
+    std::env::args().skip(1).find(|arg| is_supported_path(arg))
 }
 
 #[tauri::command]
@@ -302,21 +401,18 @@ async fn build_package(app: AppHandle, request: BuildRequest) -> Result<BuildRes
                 },
             );
         };
+        let emit_stage = |stage: BuildStage| {
+            let _ = app.emit(
+                "progress",
+                Progress {
+                    stage: "convert".to_string(),
+                    message: stage.message(),
+                },
+            );
+        };
 
-        emit("analyze", "Membaca paket .deb".into());
-        let deb = DebPackage::open(&request.path).map_err(err)?;
-
-        let table = mapping_table(&settings).map_err(err)?;
-        let mut mapper = DepMapper::new(table, SystemPacman::new());
-        mapper.allow_network = settings.check_aur;
-        let relationships: Vec<_> = deb
-            .control
-            .pre_depends()
-            .into_iter()
-            .chain(deb.control.depends())
-            .collect();
-        emit("deps", "Memetakan dependensi".into());
-        let deps = mapper.resolve_all(&relationships);
+        let source = PathBuf::from(&request.path);
+        let is_archive = archive::compression_for(&source).is_ok();
 
         let output_dir = request
             .output_dir
@@ -325,6 +421,17 @@ async fn build_package(app: AppHandle, request: BuildRequest) -> Result<BuildRes
             .or_else(|| settings.output_dir.clone().map(PathBuf::from))
             .unwrap_or_else(state::default_cache_dir);
         std::fs::create_dir_all(&output_dir).map_err(err)?;
+
+        // Arsip dan .deb butuh nama berbeda untuk direktori staging.
+        let staging_name = if is_archive {
+            ArchivePackage::open(&source)
+                .map(|pkg| pkg.name)
+                .map_err(err)?
+        } else {
+            DebPackage::open(&source)
+                .and_then(|deb| deb.control.package().map(|s| s.to_string()))
+                .map_err(err)?
+        };
 
         // TempDir menghapus staging saat drop; `keep_staging` menyimpannya
         // di samping paket hasil konversi untuk inspeksi manual.
@@ -335,7 +442,7 @@ async fn build_package(app: AppHandle, request: BuildRequest) -> Result<BuildRes
         };
         let staging_root = match &temp_dir {
             Some(dir) => dir.path().to_path_buf(),
-            None => output_dir.join(format!("{}-staging", deb.control.package().map_err(err)?)),
+            None => output_dir.join(format!("{staging_name}-staging")),
         };
         let staging = staging_root.join("stage");
         if staging.exists() {
@@ -346,33 +453,59 @@ async fn build_package(app: AppHandle, request: BuildRequest) -> Result<BuildRes
         options.include_install_script = request.include_install_script;
         options.compression_level = request.compression_level.clamp(1, 22);
 
-        emit("convert", "Mengekstrak dan menormalisasi berkas".into());
-        let builder = PackageBuilder::new(&deb, options);
-        let emit_stage = |stage: BuildStage| {
-            let _ = app.emit(
-                "progress",
-                Progress {
-                    stage: "convert".to_string(),
-                    message: stage.message(),
-                },
-            );
-        };
-        let result = builder
-            .build_with_progress(&deps, &mut |stage| emit_stage(stage))
-            .map_err(err)?;
+        // Sumber asal untuk catatan riwayat.
+        let (source_name, source_version, source_sha256, result) = if is_archive {
+            emit("analyze", "Membaca arsip tar".into());
+            let pkg = ArchivePackage::open(&source).map_err(err)?;
+            emit("convert", "Mengekstrak arsip".into());
+            let result = pkg
+                .build_with_progress(&options, &mut |stage| emit_stage(stage))
+                .map_err(err)?;
+            (
+                pkg.name.clone(),
+                pkg.version.clone(),
+                pkg.sha256.clone(),
+                result,
+            )
+        } else {
+            emit("analyze", "Membaca paket .deb".into());
+            let deb = DebPackage::open(&source).map_err(err)?;
+            let table = mapping_table(&settings).map_err(err)?;
+            let mut mapper = DepMapper::new(table, SystemPacman::new());
+            mapper.allow_network = settings.check_aur;
+            let relationships: Vec<_> = deb
+                .control
+                .pre_depends()
+                .into_iter()
+                .chain(deb.control.depends())
+                .collect();
+            emit("deps", "Memetakan dependensi".into());
+            let deps = mapper.resolve_all(&relationships);
 
-        emit("done", format!("Paket siap: {}", result.package_path.display()));
+            emit("convert", "Mengekstrak dan menormalisasi berkas".into());
+            let result = PackageBuilder::new(&deb, options)
+                .build_with_progress(&deps, &mut |stage| emit_stage(stage))
+                .map_err(err)?;
+            let name = deb.control.package().map_err(err)?.to_string();
+            let version = deb.control.version().map_err(err)?.to_string();
+            (name, version, deb.sha256.clone(), result)
+        };
+
+        emit(
+            "done",
+            format!("Paket siap: {}", result.package_path.display()),
+        );
 
         let mut history = History::load(&state::default_history_path()).unwrap_or_default();
         history.add(InstallRecord {
-            id: state::record_id(deb.control.package().map_err(err)?, &deb.sha256),
-            deb_name: deb.control.package().map_err(err)?.to_string(),
-            deb_version: deb.control.version().map_err(err)?.to_string(),
-            deb_path: std::fs::canonicalize(&request.path)
-                .unwrap_or_else(|_| PathBuf::from(&request.path))
+            id: state::record_id(&source_name, &source_sha256),
+            deb_name: source_name,
+            deb_version: source_version,
+            deb_path: std::fs::canonicalize(&source)
+                .unwrap_or_else(|_| source.clone())
                 .to_string_lossy()
                 .to_string(),
-            deb_sha256: deb.sha256.clone(),
+            deb_sha256: source_sha256,
             pkgname: result.pkgname.clone(),
             pkgver: result.full_version(),
             package_path: result.package_path.to_string_lossy().to_string(),
@@ -478,11 +611,7 @@ fn save_settings(settings: Settings) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(err)?;
     }
-    std::fs::write(
-        &path,
-        serde_json::to_vec_pretty(&settings).map_err(err)?,
-    )
-    .map_err(err)
+    std::fs::write(&path, serde_json::to_vec_pretty(&settings).map_err(err)?).map_err(err)
 }
 
 /// Menyegarkan database `pacman -F` agar pemetaan lewat soname bekerja.

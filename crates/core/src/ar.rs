@@ -209,9 +209,7 @@ pub fn read_archive<R: Read + Seek>(reader: &mut R) -> Result<Vec<ArMember>> {
 fn resolve_name(raw: &str, long_names: &[u8], data: &[u8]) -> Result<String> {
     // GNU: "#1/<len>" → nama disimpan di awal payload.
     if let Some(rest) = raw.strip_prefix("#1/") {
-        let len: usize = rest
-            .parse()
-            .map_err(|_| Error::BadArHeader(0))?;
+        let len: usize = rest.parse().map_err(|_| Error::BadArHeader(0))?;
         let name = data.get(..len).ok_or(Error::BadArHeader(0))?;
         let name = String::from_utf8_lossy(name)
             .trim_end_matches('\0')

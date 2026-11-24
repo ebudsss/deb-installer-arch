@@ -344,7 +344,9 @@ pub fn build_install_script(report: &ScriptReport) -> Option<String> {
         }
     }
 
-    let mut out = String::from("#!/bin/sh\n# Dihasilkan otomatis oleh DebInstaller dari script maintainer Debian.\n\n");
+    let mut out = String::from(
+        "#!/bin/sh\n# Dihasilkan otomatis oleh DebInstaller dari script maintainer Debian.\n\n",
+    );
     for hook in [
         Hook::PreInstall,
         Hook::PostInstall,
@@ -414,7 +416,10 @@ mod tests {
 
     #[test]
     fn no_install_script_when_nothing_translatable() {
-        let report = analyze(&scripts(&[("postinst", "update-alternatives --install /usr/bin/x x /usr/bin/y 10\n")]));
+        let report = analyze(&scripts(&[(
+            "postinst",
+            "update-alternatives --install /usr/bin/x x /usr/bin/y 10\n",
+        )]));
         assert!(build_install_script(&report).is_none());
         assert_eq!(report.max_risk(), Risk::Caution);
     }

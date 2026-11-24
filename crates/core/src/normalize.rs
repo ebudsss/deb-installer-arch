@@ -13,10 +13,7 @@ pub fn is_multiarch_triplet(component: &str) -> bool {
     if arch.is_empty() || arch.len() > 16 {
         return false;
     }
-    if !arch
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_')
-    {
+    if !arch.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return false;
     }
     let rest = rest.trim_start_matches("-linux-");
@@ -98,13 +95,22 @@ mod tests {
     fn merges_root_dirs_into_usr() {
         assert_eq!(normalize_path("/bin/bash"), "/usr/bin/bash");
         assert_eq!(normalize_path("/sbin/ip"), "/usr/bin/ip");
-        assert_eq!(normalize_path("/lib/systemd/system/a.service"), "/usr/lib/systemd/system/a.service");
-        assert_eq!(normalize_path("/lib64/ld-linux-x86-64.so.2"), "/usr/lib/ld-linux-x86-64.so.2");
+        assert_eq!(
+            normalize_path("/lib/systemd/system/a.service"),
+            "/usr/lib/systemd/system/a.service"
+        );
+        assert_eq!(
+            normalize_path("/lib64/ld-linux-x86-64.so.2"),
+            "/usr/lib/ld-linux-x86-64.so.2"
+        );
     }
 
     #[test]
     fn keeps_regular_paths() {
-        assert_eq!(normalize_path("/usr/share/applications/x.desktop"), "/usr/share/applications/x.desktop");
+        assert_eq!(
+            normalize_path("/usr/share/applications/x.desktop"),
+            "/usr/share/applications/x.desktop"
+        );
         assert_eq!(normalize_path("usr/bin/x"), "/usr/bin/x");
         assert_eq!(normalize_path("./usr/bin/x"), "/usr/bin/x");
         assert_eq!(normalize_path("/etc/foo/bar.conf"), "/etc/foo/bar.conf");

@@ -93,7 +93,10 @@ mod tests {
 
     #[test]
     fn escapes_special_characters() {
-        assert_eq!(escape_path("usr/share/a b/c#d"), "usr/share/a\\040b/c\\043d");
+        assert_eq!(
+            escape_path("usr/share/a b/c#d"),
+            "usr/share/a\\040b/c\\043d"
+        );
         assert_eq!(escape_path("a\\b"), "a\\\\b");
     }
 
@@ -124,7 +127,9 @@ mod tests {
         let text = render(&entries);
         assert!(text.starts_with("#mtree\n/set type=file uid=0 gid=0 mode=644\n"));
         assert!(text.contains("./usr/bin/app time=1700000000.0 size=10 md5digest=abc sha256digest=def mode=755 type=file"));
-        assert!(text.contains("./usr/lib/libapp.so time=1700000000.0 size=0 mode=777 type=link link=libapp.so.1"));
+        assert!(text.contains(
+            "./usr/lib/libapp.so time=1700000000.0 size=0 mode=777 type=link link=libapp.so.1"
+        ));
     }
 
     #[test]

@@ -50,7 +50,9 @@ impl Control {
     }
 
     pub fn get(&self, key: &str) -> Option<&str> {
-        self.fields.get(&key.to_ascii_lowercase()).map(String::as_str)
+        self.fields
+            .get(&key.to_ascii_lowercase())
+            .map(String::as_str)
     }
 
     pub fn require(&self, key: &'static str) -> Result<&str> {
@@ -219,10 +221,8 @@ impl Relationship {
         value
             .split(',')
             .filter_map(|clause| {
-                let alternatives: Vec<Dependency> = clause
-                    .split('|')
-                    .filter_map(Dependency::parse)
-                    .collect();
+                let alternatives: Vec<Dependency> =
+                    clause.split('|').filter_map(Dependency::parse).collect();
                 if alternatives.is_empty() {
                     None
                 } else {

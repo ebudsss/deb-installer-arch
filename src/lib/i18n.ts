@@ -13,9 +13,9 @@ const strings = {
     "Konversi .deb menjadi paket pacman native — terlacak, bisa dihapus bersih, dan tidak merusak sistem.",
     "Convert .deb into native pacman packages — tracked, cleanly removable, and safe for your system.",
   ],
-  "home.drop": ["Jatuhkan file .deb di sini", "Drop a .deb file here"],
+  "home.drop": ["Jatuhkan file di sini", "Drop a file here"],
   "home.dropActive": ["Lepaskan untuk menganalisis", "Release to analyze"],
-  "home.choose": ["Pilih file .deb", "Choose a .deb file"],
+  "home.choose": ["Pilih file", "Choose a file"],
   "home.analyzing": ["Menganalisis paket…", "Analyzing package…"],
   "home.recent": ["Terakhir dibuka", "Recently opened"],
   "home.recentHint": ["Klik untuk membuka kembali", "Click to reopen"],
@@ -223,8 +223,35 @@ const strings = {
   "settings.refreshing": ["Memperbarui…", "Refreshing…"],
 
   "home.onlyDeb": [
-    "Hanya berkas .deb yang didukung.",
-    "Only .deb files are supported.",
+    "Berkas tidak didukung. Gunakan .deb, .tar.gz, .tgz, .tar.xz, atau .tar.zst.",
+    "Unsupported file. Use .deb, .tar.gz, .tgz, .tar.xz, or .tar.zst.",
+  ],
+  "home.archiveHint": [
+    "Arsip tar dipasang ke /opt dengan tautan binari; .deb dikonversi penuh.",
+    "Tar archives install into /opt with binary links; .deb is fully converted.",
+  ],
+  "archive.badge": ["Arsip tar", "Tar archive"],
+  "archive.layout": ["Tata letak arsip", "Archive layout"],
+  "archive.layout.system": [
+    "Tata letak sistem (usr/, opt/, etc/)",
+    "System layout (usr/, opt/, etc/)",
+  ],
+  "archive.layout.portable": [
+    "Portable — dipasang ke /opt/{pkg}",
+    "Portable — installed into /opt/{pkg}",
+  ],
+  "archive.executables": ["Binari yang ditautkan", "Linked binaries"],
+  "archive.noExecutables": [
+    "Tidak ada binari yang bisa ditautkan ke /usr/bin.",
+    "No binaries could be linked into /usr/bin.",
+  ],
+  "archive.noDeps": [
+    "Arsip tidak membawa metadata dependensi, jadi tidak ada yang dipetakan.",
+    "Archives carry no dependency metadata, so nothing is mapped.",
+  ],
+  "archive.noScripts": [
+    "Arsip tidak membawa script maintainer.",
+    "Archives carry no maintainer scripts.",
   ],
   "home.about": [
     "Debian dan Arch Linux memakai tata letak berkas yang berbeda. DebInstaller menormalkan path, memetakan dependensi, dan memberi akhiran -deb pada nama paket agar tidak bentrok dengan paket repo.",

@@ -20,6 +20,14 @@ import {
 
 const MAX_RECENT = 4;
 
+/** Ekstensi yang diterima: `.deb` dan arsip tar yang didukung backend. */
+const ARCHIVE_SUFFIXES = [".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.zst", ".tzst", ".tar"];
+
+function isSupported(path: string): boolean {
+  const lower = path.toLowerCase();
+  return lower.endsWith(".deb") || ARCHIVE_SUFFIXES.some((suffix) => lower.endsWith(suffix));
+}
+
 export function Home({
   onAnalyzed,
   onError,
@@ -37,7 +45,7 @@ export function Home({
   }, []);
 
   async function analyzePath(path: string) {
-    if (!path.toLowerCase().endsWith(".deb")) {
+    if (!isSupported(path)) {
       onError(t("home.onlyDeb"));
       return;
     }
@@ -61,7 +69,7 @@ export function Home({
           setDragging(true);
         } else if (event.payload.type === "drop") {
           setDragging(false);
-          const path = event.payload.paths.find((p) => p.toLowerCase().endsWith(".deb"));
+          const path = event.payload.paths.find(isSupported);
           if (path) {
             void analyzePath(path);
           } else if (event.payload.paths.length > 0) {
@@ -88,7 +96,11 @@ export function Home({
     const selected = await open({
       multiple: false,
       directory: false,
-      filters: [{ name: "Debian package", extensions: ["deb"] }],
+      filters: [
+        { name: "Packages and archives", extensions: ["deb", "gz", "tgz", "xz", "txz", "zst", "tzst"] },
+        { name: "Debian package", extensions: ["deb"] },
+        { name: "Tar archive", extensions: ["gz", "tgz", "xz", "txz", "zst", "tzst"] },
+      ],
     });
     if (typeof selected === "string") {
       await analyzePath(selected);
@@ -96,7 +108,7 @@ export function Home({
   }
 
   const recentDebs = recent
-    .filter((record) => record.deb_path.endsWith(".deb"))
+    .filter((record) => isSupported(record.deb_path))
     .slice(0, MAX_RECENT);
 
   return (
@@ -158,7 +170,12 @@ export function Home({
             <p className="mt-2.5 flex items-center gap-1.5 text-[11.5px] text-[var(--faint)]">
               <IconFile size={12} />
               <span>
-                {t("home.formats")} <code className="text-[var(--muted)]">.deb</code>
+                {t("home.formats")}{" "}
+                <code className="text-[var(--muted)]">.deb</code>
+                <span className="text-[var(--faint)]"> · </span>
+                <code className="text-[var(--muted)]">.tar.gz</code>
+                <span className="text-[var(--faint)]"> · </span>
+                <code className="text-[var(--muted)]">.tar.xz</code>
               </span>
             </p>
           </>

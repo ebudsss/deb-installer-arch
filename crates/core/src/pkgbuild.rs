@@ -4,14 +4,13 @@
 //! tulis `.PKGINFO`, `.INSTALL`, `.MTREE` → kemas ulang jadi
 //! `.pkg.tar.zst`.
 
-use crate::control::Control;
 use crate::deb::DebPackage;
 use crate::deps::{DepResolution, DepStatus};
 use crate::error::{Error, Result};
 use crate::mtree::{self, MtreeEntry, MtreeKind};
 use crate::normalize;
-use crate::security::{self, SensitivePath};
 use crate::scripts::{self, ScriptReport};
+use crate::security::{self, SensitivePath};
 use md5::Md5;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -179,7 +178,13 @@ fn sanitize_pkgver(input: &str) -> String {
 fn sanitize_pkgrel(input: &str) -> String {
     let mut out: String = input
         .chars()
-        .map(|c| if c.is_ascii_digit() || c == '.' { c } else { '.' })
+        .map(|c| {
+            if c.is_ascii_digit() || c == '.' {
+                c
+            } else {
+                '.'
+            }
+        })
         .collect();
     while out.contains("..") {
         out = out.replace("..", ".");
@@ -298,20 +303,42 @@ impl<'a> PackageBuilder<'a> {
             None
         };
 
-        let pkginfo = self.render_pkginfo(&PkgInfoMeta {
+        let full_version = version.full();
+        let xdata = vec![
+            ("debian-package".to_string(), deb_name.clone()),
+            ("debian-version".to_string(), deb_version.clone()),
+            ("debian-sha256".to_string(), self.deb.sha256.clone()),
+            (
+                "debian-arch".to_string(),
+                control.architecture().unwrap_or("").to_string(),
+            ),
+        ];
+        let pkginfo = render_pkginfo(&PkgInfoMeta {
             pkgname: &pkgname,
-            deb_name: &deb_name,
-            deb_version: &deb_version,
-            version: &version,
+            pkgver: &full_version,
+            desc: control.synopsis(),
+            url: control.get("homepage").unwrap_or(""),
             arch: &arch,
+            packager: &self.options.packager,
             dependencies: &dependencies,
             installed_size,
+            xdata: &xdata,
         });
 
         let staging = &self.options.staging_dir;
-        self.write_metadata_file(staging, ".PKGINFO", pkginfo.as_bytes(), &mut extraction.entries)?;
+        self.write_metadata_file(
+            staging,
+            ".PKGINFO",
+            pkginfo.as_bytes(),
+            &mut extraction.entries,
+        )?;
         if let Some(script) = &install_script {
-            self.write_metadata_file(staging, ".INSTALL", script.as_bytes(), &mut extraction.entries)?;
+            self.write_metadata_file(
+                staging,
+                ".INSTALL",
+                script.as_bytes(),
+                &mut extraction.entries,
+            )?;
         }
 
         let mut mtree_buf = Vec::new();
@@ -319,15 +346,24 @@ impl<'a> PackageBuilder<'a> {
             .map_err(|e| Error::Build(format!(".MTREE: {e}")))?;
         fs::write(staging.join(".MTREE"), &mtree_buf)?;
 
+        // Berkas metadata pacman (`.PKGINFO`, `.INSTALL`) tidak dihitung
+        // sebagai berkas paket agar angka sama dengan daftar isi.
         let file_count = extraction
             .entries
             .iter()
-            .filter(|e| e.kind == MtreeKind::File)
+            .filter(|e| e.kind == MtreeKind::File && !e.path.starts_with('.'))
             .count();
 
         let file_name = format!("{pkgname}-{}-{arch}.pkg.tar.zst", version.full());
         let package_path = self.options.output_dir.join(&file_name);
-        self.pack_staging(staging, &package_path, &extraction.entries, progress)?;
+        pack_staging(
+            staging,
+            &package_path,
+            &extraction.entries,
+            self.options.compression_level,
+            self.options.compression_threads,
+            progress,
+        )?;
 
         Ok(BuildResult {
             package_path,
@@ -349,170 +385,13 @@ impl<'a> PackageBuilder<'a> {
         notes: &mut Vec<String>,
         progress: &mut dyn FnMut(BuildStage),
     ) -> Result<Extraction> {
-        let staging = &self.options.staging_dir;
-        let reader = self.deb.data_reader()?;
-        let mut archive = tar::Archive::new(reader);
-
-        let mut entries: Vec<MtreeEntry> = Vec::new();
-        let mut warnings: Vec<SensitivePath> = Vec::new();
-        let mut forbidden: Vec<SensitivePath> = Vec::new();
-        let mut deferred_links: Vec<(String, String, u32, i64)> = Vec::new();
-        let mut seen: BTreeMap<String, ()> = BTreeMap::new();
-
-        for entry in archive.entries()? {
-            let mut entry = entry?;
-            let header = entry.header();
-            let entry_type = header.entry_type();
-            let raw_path = entry.path()?.to_string_lossy().to_string();
-            let path = normalize::normalize_path(&raw_path);
-            if path == "/" || path.is_empty() {
-                continue;
-            }
-            let rel = path.trim_start_matches('/').to_string();
-            let mode = header.mode().unwrap_or(0o644);
-            let mtime = header.mtime().unwrap_or(0) as i64;
-
-            if let Some(hit) = security::check_path(&path) {
-                match hit.level {
-                    security::Sensitivity::Forbidden => {
-                        forbidden.push(hit);
-                        continue;
-                    }
-                    security::Sensitivity::Warning => warnings.push(hit),
-                }
-            }
-
-            if entries.len().is_multiple_of(32) {
-                progress(BuildStage::Extracting {
-                    files: entries.len(),
-                });
-            }
-
-            if seen.insert(rel.clone(), ()).is_some() {
-                // Direktori duplikat normal terjadi saat multiarch digabung
-                // (mis. /usr/lib/x86_64-linux-gnu dan /usr/lib).
-                if !entry_type.is_dir() {
-                    notes.push(format!(
-                        "dua berkas menuju path yang sama setelah normalisasi: {path}"
-                    ));
-                }
-                continue;
-            }
-
-            if entry_type.is_dir() {
-                ensure_dir(staging, &rel)?;
-                entries.push(MtreeEntry {
-                    path: rel,
-                    kind: MtreeKind::Dir,
-                    mode: 0o755,
-                    size: 0,
-                    time: mtime,
-                    md5: None,
-                    sha256: None,
-                    link: None,
-                });
-                continue;
-            }
-
-            if entry_type.is_symlink() {
-                let target = entry
-                    .link_name()?
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                let normalized = normalize::normalize_link_target(&target);
-                let dest = staging.join(&rel);
-                ensure_parent(staging, &rel)?;
-                if dest.symlink_metadata().is_ok() {
-                    fs::remove_file(&dest)?;
-                }
-                std::os::unix::fs::symlink(&normalized, &dest)?;
-                entries.push(MtreeEntry {
-                    path: rel,
-                    kind: MtreeKind::Link,
-                    mode: 0o777,
-                    size: 0,
-                    time: mtime,
-                    md5: None,
-                    sha256: None,
-                    link: Some(normalized),
-                });
-                continue;
-            }
-
-            if entry_type.is_hard_link() {
-                let target = entry
-                    .link_name()?
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                let target_rel = normalize::normalize_path(&target)
-                    .trim_start_matches('/')
-                    .to_string();
-                deferred_links.push((rel, target_rel, mode, mtime));
-                continue;
-            }
-
-            if !entry_type.is_file() {
-                // FIFO, socket, device: tidak boleh masuk paket.
-                notes.push(format!("entri bertipe khusus dilewati: {path}"));
-                continue;
-            }
-
-            ensure_parent(staging, &rel)?;
-            let dest = staging.join(&rel);
-            if dest.exists() {
-                return Err(Error::Build(format!(
-                    "konflik berkas: {path} sudah ada di paket (kemungkinan duplikat setelah normalisasi)"
-                )));
-            }
-            let (size, md5_hex, sha256_hex) = write_file(&mut entry, &dest, mode)?;
-            entries.push(MtreeEntry {
-                path: rel,
-                kind: MtreeKind::File,
-                mode: mode & 0o7777,
-                size,
-                time: mtime,
-                md5: Some(md5_hex),
-                sha256: Some(sha256_hex),
-                link: None,
-            });
-        }
-
-        // Hardlink: target harus sudah diekstrak.
-        for (rel, target_rel, mode, mtime) in deferred_links {
-            let target = staging.join(&target_rel);
-            let dest = staging.join(&rel);
-            ensure_parent(staging, &rel)?;
-            let meta = target.symlink_metadata().map_err(|_| {
-                Error::Build(format!(
-                    "hardlink {} menunjuk target yang tidak ada: {}",
-                    rel, target_rel
-                ))
-            })?;
-            if meta.is_dir() {
-                return Err(Error::Build(format!(
-                    "hardlink {} menunjuk direktori: {}",
-                    rel, target_rel
-                )));
-            }
-            fs::hard_link(&target, &dest).or_else(|_| fs::copy(&target, &dest).map(|_| ()))?;
-            let data = fs::read(&dest)?;
-            entries.push(MtreeEntry {
-                path: rel,
-                kind: MtreeKind::File,
-                mode: mode & 0o7777,
-                size: data.len() as u64,
-                time: mtime,
-                md5: Some(format!("{:x}", Md5::digest(&data))),
-                sha256: Some(format!("{:x}", Sha256::digest(&data))),
-                link: None,
-            });
-        }
-
-        Ok(Extraction {
-            entries,
-            warnings,
-            forbidden,
-        })
+        extract_tar(
+            self.deb.data_reader()?,
+            &self.options.staging_dir,
+            PathPlan::Debian,
+            notes,
+            progress,
+        )
     }
 
     fn write_metadata_file(
@@ -536,138 +415,6 @@ impl<'a> PackageBuilder<'a> {
             sha256: Some(format!("{:x}", Sha256::digest(content))),
             link: None,
         });
-        Ok(())
-    }
-
-    fn render_pkginfo(&self, meta: &PkgInfoMeta<'_>) -> String {
-        let PkgInfoMeta {
-            pkgname,
-            deb_name,
-            deb_version,
-            version,
-            arch,
-            dependencies,
-            installed_size,
-        } = *meta;
-        let control: &Control = &self.deb.control;
-        let mut out = String::new();
-        out.push_str("# Dibuat oleh DebInstaller\n");
-        out.push_str(&format!("pkgname = {pkgname}\n"));
-        out.push_str(&format!("pkgbase = {pkgname}\n"));
-        out.push_str(&format!("pkgver = {}\n", version.full()));
-        out.push_str(&format!("pkgdesc = {}\n", single_line(control.synopsis())));
-        out.push_str(&format!(
-            "url = {}\n",
-            control.get("homepage").unwrap_or("").trim()
-        ));
-        out.push_str(&format!("builddate = {}\n", now_secs()));
-        out.push_str(&format!("packager = {}\n", single_line(&self.options.packager)));
-        out.push_str(&format!("size = {installed_size}\n"));
-        out.push_str(&format!("arch = {arch}\n"));
-        out.push_str("license = custom\n");
-        for dep in dependencies {
-            out.push_str(&format!("depend = {dep}\n"));
-        }
-        out.push_str(&format!("xdata = debian-package={deb_name}\n"));
-        out.push_str(&format!("xdata = debian-version={deb_version}\n"));
-        out.push_str(&format!("xdata = debian-sha256={}\n", self.deb.sha256));
-        out.push_str(&format!("xdata = debian-arch={}\n", control.architecture().unwrap_or("")));
-        out
-    }
-
-    fn pack_staging(
-        &self,
-        staging: &Path,
-        out_path: &Path,
-        entries: &[MtreeEntry],
-        progress: &mut dyn FnMut(BuildStage),
-    ) -> Result<()> {
-        let mut paths = Vec::new();
-        collect_paths(staging, staging, &mut paths)?;
-        paths.sort();
-
-        // Mtime dan mode harus sama dengan yang tercatat di `.MTREE`, kalau
-        // tidak `pacman -Qkk` akan melaporkan berkas berubah.
-        let metadata: BTreeMap<&str, &MtreeEntry> =
-            entries.iter().map(|e| (e.path.as_str(), e)).collect();
-
-        // Perkiraan ukuran tar: isi berkas + header 512 byte per entri.
-        let payload: u64 = entries
-            .iter()
-            .filter(|e| e.kind == MtreeKind::File)
-            .map(|e| e.size)
-            .sum();
-        let total = payload + (paths.len() as u64 + 1) * 512;
-
-        let file = fs::File::create(out_path)?;
-        let mut encoder = zstd::stream::write::Encoder::new(file, self.options.compression_level)
-            .map_err(|e| Error::Build(format!("zstd: {e}")))?;
-
-        let workers = match self.options.compression_threads {
-            0 => std::thread::available_parallelism()
-                .map(|n| n.get().min(8) as u32)
-                .unwrap_or(1),
-            n => n,
-        };
-        if workers > 1 {
-            encoder
-                .multithread(workers)
-                .map_err(|e| Error::Build(format!("zstd multithread: {e}")))?;
-        }
-
-        let counter = ProgressWriter::new(encoder, total, progress);
-        let mut builder = tar::Builder::new(counter);
-        builder.mode(tar::HeaderMode::Deterministic);
-
-        for rel in &paths {
-            let abs = staging.join(rel);
-            let meta = abs.symlink_metadata()?;
-            let recorded = metadata.get(rel.as_str());
-            let mtime = recorded.map(|e| e.time).unwrap_or_else(now_secs);
-            let mode = recorded
-                .map(|e| e.mode)
-                .unwrap_or_else(|| meta.permissions().mode() & 0o7777);
-
-            let mut header = tar::Header::new_gnu();
-            header.set_uid(0);
-            header.set_gid(0);
-            header.set_username("root").ok();
-            header.set_groupname("root").ok();
-            header.set_mtime(mtime.max(0) as u64);
-            header.set_mode(mode);
-
-            if meta.is_symlink() {
-                let target = fs::read_link(&abs)?;
-                header.set_entry_type(tar::EntryType::Symlink);
-                header.set_size(0);
-                header.set_link_name(&target)?;
-                header.set_cksum();
-                builder.append_data(&mut header, rel, std::io::empty())?;
-            } else if meta.is_dir() {
-                header.set_entry_type(tar::EntryType::Directory);
-                header.set_size(0);
-                header.set_cksum();
-                // Direktori disimpan dengan akhiran `/`, seperti paket
-                // buatan makepkg; pacman memakai akhiran ini untuk
-                // mengenali direktori di daftar berkas.
-                let dir_name = format!("{rel}/");
-                builder.append_data(&mut header, dir_name, std::io::empty())?;
-            } else {
-                header.set_entry_type(tar::EntryType::Regular);
-                header.set_size(meta.len());
-                header.set_cksum();
-                let mut f = fs::File::open(&abs)?;
-                builder.append_data(&mut header, rel, &mut f)?;
-            }
-        }
-
-        let counter = builder
-            .into_inner()
-            .map_err(|e| Error::Build(format!("tar: {e}")))?;
-        counter
-            .into_inner()
-            .finish()
-            .map_err(|e| Error::Build(format!("zstd: {e}")))?;
         Ok(())
     }
 }
@@ -720,20 +467,24 @@ impl<W: Write> Write for ProgressWriter<'_, W> {
 }
 
 /// Data yang dibutuhkan untuk menulis `.PKGINFO`.
-struct PkgInfoMeta<'a> {
-    pkgname: &'a str,
-    deb_name: &'a str,
-    deb_version: &'a str,
-    version: &'a ArchVersion,
-    arch: &'a str,
-    dependencies: &'a [String],
-    installed_size: u64,
+pub(crate) struct PkgInfoMeta<'a> {
+    pub(crate) pkgname: &'a str,
+    /// Versi lengkap gaya pacman, mis. `1.4.0-2`.
+    pub(crate) pkgver: &'a str,
+    pub(crate) desc: &'a str,
+    pub(crate) url: &'a str,
+    pub(crate) arch: &'a str,
+    pub(crate) packager: &'a str,
+    pub(crate) dependencies: &'a [String],
+    pub(crate) installed_size: u64,
+    /// Baris `xdata` yang mencatat asal paket.
+    pub(crate) xdata: &'a [(String, String)],
 }
 
-struct Extraction {
-    entries: Vec<MtreeEntry>,
-    warnings: Vec<SensitivePath>,
-    forbidden: Vec<SensitivePath>,
+pub(crate) struct Extraction {
+    pub(crate) entries: Vec<MtreeEntry>,
+    pub(crate) warnings: Vec<SensitivePath>,
+    pub(crate) forbidden: Vec<SensitivePath>,
 }
 
 /// Nama dependensi yang akan ditulis ke `.PKGINFO`, tanpa paket itu sendiri.
@@ -818,7 +569,11 @@ fn write_file(reader: &mut impl Read, dest: &Path, mode: u32) -> Result<(u64, St
     out.flush()?;
     drop(out);
     fs::set_permissions(dest, fs::Permissions::from_mode(mode & 0o7777))?;
-    Ok((size, format!("{:x}", md5.finalize()), format!("{:x}", sha.finalize())))
+    Ok((
+        size,
+        format!("{:x}", md5.finalize()),
+        format!("{:x}", sha.finalize()),
+    ))
 }
 
 fn collect_paths(root: &Path, current: &Path, out: &mut Vec<String>) -> Result<()> {
@@ -944,4 +699,384 @@ mod tests {
         let err = ensure_dir(&staging, "usr/bin/evil").unwrap_err();
         assert!(matches!(err, Error::UnsafePath(_)));
     }
+}
+
+/// Merencanakan tujuan setiap entri arsip.
+#[derive(Debug, Clone)]
+pub(crate) enum PathPlan {
+    /// `.deb`: normalisasi tata letak Debian.
+    Debian,
+    /// Arsip yang sudah berisi tata letak sistem (`usr/`, `opt/`, `etc/`).
+    System,
+    /// Arsip portable: `root` dibuang, isi ditaruh di bawah `prefix`.
+    Portable {
+        root: Option<String>,
+        prefix: String,
+    },
+}
+
+impl PathPlan {
+    /// Path relatif tujuan untuk satu entri, atau `None` bila dilewati.
+    fn dest(&self, raw_path: &str) -> Option<String> {
+        let normalized = normalize::normalize_path(raw_path);
+        if normalized == "/" {
+            return None;
+        }
+        let rel = normalized.trim_start_matches('/').to_string();
+        match self {
+            PathPlan::Debian | PathPlan::System => Some(rel),
+            PathPlan::Portable { root, prefix } => {
+                let stripped = match root {
+                    Some(root) => rel
+                        .strip_prefix(&format!("{root}/"))
+                        .or_else(|| (rel == *root).then_some(""))
+                        .unwrap_or(&rel),
+                    None => rel.as_str(),
+                };
+                if stripped.is_empty() {
+                    return None;
+                }
+                // Berkas .desktop di luar share/applications dipindahkan agar
+                // terdaftar oleh desktop environment.
+                if stripped.ends_with(".desktop") && !stripped.starts_with("share/applications/") {
+                    let name = stripped.rsplit('/').next().unwrap_or(stripped);
+                    return Some(format!("usr/share/applications/{name}"));
+                }
+                Some(format!("{prefix}/{stripped}"))
+            }
+        }
+    }
+}
+
+/// Mengekstrak isi tar ke direktori staging dengan normalisasi dan
+/// pemeriksaan keamanan yang sama untuk `.deb` maupun arsip.
+pub(crate) fn extract_tar(
+    reader: impl Read,
+    staging: &Path,
+    plan: PathPlan,
+    notes: &mut Vec<String>,
+    progress: &mut dyn FnMut(BuildStage),
+) -> Result<Extraction> {
+    let mut archive = tar::Archive::new(reader);
+
+    let mut entries: Vec<MtreeEntry> = Vec::new();
+    let mut warnings: Vec<SensitivePath> = Vec::new();
+    let mut forbidden: Vec<SensitivePath> = Vec::new();
+    let mut deferred_links: Vec<(String, String, u32, i64)> = Vec::new();
+    let mut seen: BTreeMap<String, ()> = BTreeMap::new();
+    let mut portable_bins: Vec<(String, String)> = Vec::new();
+
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let header = entry.header();
+        let entry_type = header.entry_type();
+        let raw_path = entry.path()?.to_string_lossy().to_string();
+        let Some(rel) = plan.dest(&raw_path) else {
+            continue;
+        };
+        let path = format!("/{rel}");
+        let mode = header.mode().unwrap_or(0o644);
+        let mtime = header.mtime().unwrap_or(0) as i64;
+
+        if let Some(hit) = security::check_path(&path) {
+            match hit.level {
+                security::Sensitivity::Forbidden => {
+                    forbidden.push(hit);
+                    continue;
+                }
+                security::Sensitivity::Warning => warnings.push(hit),
+            }
+        }
+
+        if entries.len().is_multiple_of(32) {
+            progress(BuildStage::Extracting {
+                files: entries.len(),
+            });
+        }
+
+        if seen.insert(rel.clone(), ()).is_some() {
+            // Direktori duplikat normal terjadi saat multiarch digabung
+            // (mis. /usr/lib/x86_64-linux-gnu dan /usr/lib).
+            if !entry_type.is_dir() {
+                notes.push(format!(
+                    "dua berkas menuju path yang sama setelah normalisasi: {path}"
+                ));
+            }
+            continue;
+        }
+
+        if entry_type.is_dir() {
+            ensure_dir(staging, &rel)?;
+            entries.push(MtreeEntry {
+                path: rel,
+                kind: MtreeKind::Dir,
+                mode: 0o755,
+                size: 0,
+                time: mtime,
+                md5: None,
+                sha256: None,
+                link: None,
+            });
+            continue;
+        }
+
+        if entry_type.is_symlink() {
+            let target = entry
+                .link_name()?
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let normalized = normalize::normalize_link_target(&target);
+            let dest = staging.join(&rel);
+            ensure_parent(staging, &rel)?;
+            if dest.symlink_metadata().is_ok() {
+                fs::remove_file(&dest)?;
+            }
+            std::os::unix::fs::symlink(&normalized, &dest)?;
+            entries.push(MtreeEntry {
+                path: rel,
+                kind: MtreeKind::Link,
+                mode: 0o777,
+                size: 0,
+                time: mtime,
+                md5: None,
+                sha256: None,
+                link: Some(normalized),
+            });
+            continue;
+        }
+
+        if entry_type.is_hard_link() {
+            let target = entry
+                .link_name()?
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let target_rel = normalize::normalize_path(&target)
+                .trim_start_matches('/')
+                .to_string();
+            deferred_links.push((rel, target_rel, mode, mtime));
+            continue;
+        }
+
+        if !entry_type.is_file() {
+            // FIFO, socket, device: tidak boleh masuk paket.
+            notes.push(format!("entri bertipe khusus dilewati: {path}"));
+            continue;
+        }
+
+        if let PathPlan::Portable { prefix, .. } = &plan {
+            // Binari di `bin/` atau di akar arsip ditautkan ke /usr/bin agar
+            // bisa dipanggil dari terminal dan oleh berkas .desktop.
+            let stripped = rel.strip_prefix(&format!("{prefix}/")).unwrap_or(&rel);
+            let is_bin = !stripped.contains('/') || stripped.starts_with("bin/");
+            if is_bin && mode & 0o111 != 0 {
+                if let Some(name) = stripped.rsplit('/').next() {
+                    if !name.is_empty() {
+                        portable_bins.push((format!("usr/bin/{name}"), format!("/{rel}")));
+                    }
+                }
+            }
+        }
+
+        ensure_parent(staging, &rel)?;
+        let dest = staging.join(&rel);
+        if dest.exists() {
+            return Err(Error::Build(format!(
+                "konflik berkas: {path} sudah ada di paket (kemungkinan duplikat setelah normalisasi)"
+            )));
+        }
+        let (size, md5_hex, sha256_hex) = write_file(&mut entry, &dest, mode)?;
+        entries.push(MtreeEntry {
+            path: rel,
+            kind: MtreeKind::File,
+            mode: mode & 0o7777,
+            size,
+            time: mtime,
+            md5: Some(md5_hex),
+            sha256: Some(sha256_hex),
+            link: None,
+        });
+    }
+
+    // Hardlink: target harus sudah diekstrak.
+    for (rel, target_rel, mode, mtime) in deferred_links {
+        let target = staging.join(&target_rel);
+        let dest = staging.join(&rel);
+        ensure_parent(staging, &rel)?;
+        let meta = target.symlink_metadata().map_err(|_| {
+            Error::Build(format!(
+                "hardlink {} menunjuk target yang tidak ada: {}",
+                rel, target_rel
+            ))
+        })?;
+        if meta.is_dir() {
+            return Err(Error::Build(format!(
+                "hardlink {} menunjuk direktori: {}",
+                rel, target_rel
+            )));
+        }
+        fs::hard_link(&target, &dest).or_else(|_| fs::copy(&target, &dest).map(|_| ()))?;
+        let data = fs::read(&dest)?;
+        entries.push(MtreeEntry {
+            path: rel,
+            kind: MtreeKind::File,
+            mode: mode & 0o7777,
+            size: data.len() as u64,
+            time: mtime,
+            md5: Some(format!("{:x}", Md5::digest(&data))),
+            sha256: Some(format!("{:x}", Sha256::digest(&data))),
+            link: None,
+        });
+    }
+
+    // Tautan binari portable dibuat setelah semua berkas ada.
+    for (link_rel, target) in portable_bins {
+        if seen.contains_key(&link_rel) {
+            notes.push(format!(
+                "tautan {link_rel} dilewati: nama sudah dipakai berkas lain di arsip"
+            ));
+            continue;
+        }
+        let dest = staging.join(&link_rel);
+        ensure_parent(staging, &link_rel)?;
+        if dest.symlink_metadata().is_ok() {
+            fs::remove_file(&dest)?;
+        }
+        std::os::unix::fs::symlink(&target, &dest)?;
+        entries.push(MtreeEntry {
+            path: link_rel,
+            kind: MtreeKind::Link,
+            mode: 0o777,
+            size: 0,
+            time: now_secs(),
+            md5: None,
+            sha256: None,
+            link: Some(target),
+        });
+    }
+
+    Ok(Extraction {
+        entries,
+        warnings,
+        forbidden,
+    })
+}
+
+/// Merender isi `.PKGINFO`.
+pub(crate) fn render_pkginfo(meta: &PkgInfoMeta<'_>) -> String {
+    let mut out = String::new();
+    out.push_str("# Dibuat oleh DebInstaller\n");
+    out.push_str(&format!("pkgname = {}\n", meta.pkgname));
+    out.push_str(&format!("pkgbase = {}\n", meta.pkgname));
+    out.push_str(&format!("pkgver = {}\n", meta.pkgver));
+    out.push_str(&format!("pkgdesc = {}\n", single_line(meta.desc)));
+    out.push_str(&format!("url = {}\n", meta.url.trim()));
+    out.push_str(&format!("builddate = {}\n", now_secs()));
+    out.push_str(&format!("packager = {}\n", single_line(meta.packager)));
+    out.push_str(&format!("size = {}\n", meta.installed_size));
+    out.push_str(&format!("arch = {}\n", meta.arch));
+    out.push_str("license = custom\n");
+    for dep in meta.dependencies {
+        out.push_str(&format!("depend = {dep}\n"));
+    }
+    for (key, value) in meta.xdata {
+        out.push_str(&format!("xdata = {key}={value}\n"));
+    }
+    out
+}
+
+pub(crate) fn pack_staging(
+    staging: &Path,
+    out_path: &Path,
+    entries: &[MtreeEntry],
+    level: i32,
+    threads: u32,
+    progress: &mut dyn FnMut(BuildStage),
+) -> Result<()> {
+    let mut paths = Vec::new();
+    collect_paths(staging, staging, &mut paths)?;
+    paths.sort();
+
+    // Mtime dan mode harus sama dengan yang tercatat di `.MTREE`, kalau
+    // tidak `pacman -Qkk` akan melaporkan berkas berubah.
+    let metadata: BTreeMap<&str, &MtreeEntry> =
+        entries.iter().map(|e| (e.path.as_str(), e)).collect();
+
+    // Perkiraan ukuran tar: isi berkas + header 512 byte per entri.
+    let payload: u64 = entries
+        .iter()
+        .filter(|e| e.kind == MtreeKind::File)
+        .map(|e| e.size)
+        .sum();
+    let total = payload + (paths.len() as u64 + 1) * 512;
+
+    let file = fs::File::create(out_path)?;
+    let mut encoder = zstd::stream::write::Encoder::new(file, level)
+        .map_err(|e| Error::Build(format!("zstd: {e}")))?;
+
+    let workers = match threads {
+        0 => std::thread::available_parallelism()
+            .map(|n| n.get().min(8) as u32)
+            .unwrap_or(1),
+        n => n,
+    };
+    if workers > 1 {
+        encoder
+            .multithread(workers)
+            .map_err(|e| Error::Build(format!("zstd multithread: {e}")))?;
+    }
+
+    let counter = ProgressWriter::new(encoder, total, progress);
+    let mut builder = tar::Builder::new(counter);
+    builder.mode(tar::HeaderMode::Deterministic);
+
+    for rel in &paths {
+        let abs = staging.join(rel);
+        let meta = abs.symlink_metadata()?;
+        let recorded = metadata.get(rel.as_str());
+        let mtime = recorded.map(|e| e.time).unwrap_or_else(now_secs);
+        let mode = recorded
+            .map(|e| e.mode)
+            .unwrap_or_else(|| meta.permissions().mode() & 0o7777);
+
+        let mut header = tar::Header::new_gnu();
+        header.set_uid(0);
+        header.set_gid(0);
+        header.set_username("root").ok();
+        header.set_groupname("root").ok();
+        header.set_mtime(mtime.max(0) as u64);
+        header.set_mode(mode);
+
+        if meta.is_symlink() {
+            let target = fs::read_link(&abs)?;
+            header.set_entry_type(tar::EntryType::Symlink);
+            header.set_size(0);
+            header.set_link_name(&target)?;
+            header.set_cksum();
+            builder.append_data(&mut header, rel, std::io::empty())?;
+        } else if meta.is_dir() {
+            header.set_entry_type(tar::EntryType::Directory);
+            header.set_size(0);
+            header.set_cksum();
+            // Direktori disimpan dengan akhiran `/`, seperti paket
+            // buatan makepkg; pacman memakai akhiran ini untuk
+            // mengenali direktori di daftar berkas.
+            let dir_name = format!("{rel}/");
+            builder.append_data(&mut header, dir_name, std::io::empty())?;
+        } else {
+            header.set_entry_type(tar::EntryType::Regular);
+            header.set_size(meta.len());
+            header.set_cksum();
+            let mut f = fs::File::open(&abs)?;
+            builder.append_data(&mut header, rel, &mut f)?;
+        }
+    }
+
+    let counter = builder
+        .into_inner()
+        .map_err(|e| Error::Build(format!("tar: {e}")))?;
+    counter
+        .into_inner()
+        .finish()
+        .map_err(|e| Error::Build(format!("zstd: {e}")))?;
+    Ok(())
 }
