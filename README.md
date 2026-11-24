@@ -62,6 +62,27 @@ cargo tauri dev                 # terminal 2 (butuh tauri-cli)
 ./run.sh file.deb           # langsung membuka tinjauan paket itu
 ```
 
+### Memasang ke menu aplikasi
+
+```sh
+./packaging/install-local.sh              # pasang
+./packaging/install-local.sh --uninstall  # cabut
+```
+
+Dipasang tanpa root ke direktori pengguna:
+
+| Berkas | Lokasi |
+|---|---|
+| Binari rilis | `~/.local/bin/deb-installer` |
+| Entri menu | `~/.local/share/applications/deb-installer.desktop` |
+| Ikon 32/128/256/512 px | `~/.local/share/icons/hicolor/*/apps/` |
+| Asosiasi `.deb` | `~/.local/share/mime/packages/deb-installer.xml` |
+
+Setelah itu **DebInstaller** muncul di menu aplikasi, dan klik kanan file `.deb`
+menawarkan "Buka dengan DebInstaller". Entri menu memakai
+`env WEBKIT_DISABLE_DMABUF_RENDERER=1` karena `Exec=` tidak bisa memuat
+penugasan variabel langsung.
+
 `run.sh` hanya membungkus binari di `target/debug/` dan menyalakan
 `WEBKIT_DISABLE_DMABUF_RENDERER=1`. Variabel itu wajib di sebagian sistem
 (NVIDIA proprietary, atau Mesa tanpa DRI3): tanpanya WebKitGTK gagal membuat
