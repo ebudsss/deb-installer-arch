@@ -1,0 +1,28 @@
+[package]
+name = "deb-installer"
+description = "GUI installer .deb untuk Arch Linux"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "deb_installer_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[features]
+# Diperlukan untuk build tanpa Tauri CLI: aset frontend ditanam di binari.
+custom-protocol = ["tauri/custom-protocol"]
+
+[dependencies]
+deb-installer-core.workspace = true
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde.workspace = true
+serde_json.workspace = true
+tempfile = "3"

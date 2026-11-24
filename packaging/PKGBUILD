@@ -1,0 +1,47 @@
+# Maintainer: ebudsss <ebudsss@users.noreply.github.com>
+pkgname=deb-installer
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="GUI installer that converts .deb packages into native pacman packages"
+arch=('x86_64')
+url="https://github.com/ebudsss/deb-installer-arch"
+license=('MIT')
+depends=('webkit2gtk-4.1' 'gtk3' 'polkit' 'pacman' 'zstd' 'xz' 'gzip' 'curl')
+makedepends=('cargo' 'nodejs' 'pnpm' 'rust')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "$pkgname-$pkgver"
+
+  # Frontend: build statis ke dist/, lalu dibundel oleh tauri.
+  pnpm install --frozen-lockfile
+  pnpm build
+
+  # Backend: Tauri membangun binari rilis dengan aset frontend tertanam.
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo build --release --locked -p deb-installer
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo test --release --locked -p deb-installer-core
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  install -Dm755 "$srcdir/target/release/deb-installer" \
+    "$pkgdir/usr/bin/deb-installer"
+  install -Dm644 packaging/deb-installer.desktop \
+    "$pkgdir/usr/share/applications/deb-installer.desktop"
+  install -Dm644 packaging/deb-installer-mime.xml \
+    "$pkgdir/usr/share/mime/packages/deb-installer.xml"
+  install -Dm644 src-tauri/icons/icon.png \
+    "$pkgdir/usr/share/icons/hicolor/512x512/apps/deb-installer.png"
+  install -Dm644 src-tauri/icons/128x128.png \
+    "$pkgdir/usr/share/icons/hicolor/128x128/apps/deb-installer.png"
+  install -Dm644 src-tauri/icons/32x32.png \
+    "$pkgdir/usr/share/icons/hicolor/32x32/apps/deb-installer.png"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=DebInstaller
+GenericName=Debian Package Installer
+Comment=Convert .deb packages into native pacman packages
+Comment[id]=Konversi paket .deb menjadi paket pacman native
+Exec=deb-installer %f
+Icon=deb-installer
+Terminal=false
+Categories=System;PackageManager;Utility;
+Keywords=deb;debian;install;package;convert;
+MimeType=application/vnd.debian.binary-package;
+StartupNotify=true
+StartupWMClass=DebInstaller

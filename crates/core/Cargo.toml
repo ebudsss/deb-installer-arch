@@ -1,0 +1,24 @@
+[package]
+name = "deb-installer-core"
+description = "Parse .deb packages and convert them into native pacman packages"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+flate2 = "1"
+xz2 = "0.1"
+zstd = { version = "0.13", features = ["zstdmt"] }
+tar = "0.4"
+md-5 = "0.10"
+sha2 = "0.10"
+toml = "0.8"
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
