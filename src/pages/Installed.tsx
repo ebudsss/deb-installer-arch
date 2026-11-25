@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import brandSymbol from "../assets/brand-symbol.png";
-import { api, type InstallRecord } from "../lib/api";
+import { api, type InstalledEntry } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { useToast } from "../components/toast";
 import {
@@ -22,6 +22,7 @@ import {
   IconFolder,
   IconPackage,
   IconRefresh,
+  IconPlay,
   IconSearch,
   IconTrash,
   IconX,
@@ -29,7 +30,7 @@ import {
 
 type Filter = "all" | "installed" | "pending";
 
-function isInstalled(record: InstallRecord): boolean {
+function isInstalled(record: InstalledEntry): boolean {
   return record.installed_at !== null && record.uninstalled_at === null;
 }
 
@@ -42,9 +43,9 @@ export function Installed({
 }) {
   const { t } = useI18n();
   const toast = useToast();
-  const [records, setRecords] = useState<InstallRecord[] | null>(null);
+  const [records, setRecords] = useState<InstalledEntry[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [target, setTarget] = useState<InstallRecord | null>(null);
+  const [target, setTarget] = useState<InstalledEntry | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [log, setLog] = useState<string[]>([]);
@@ -88,7 +89,15 @@ export function Installed({
     });
   }, [records, query, filter]);
 
-  async function uninstall(record: InstallRecord) {
+  async function open(record: InstalledEntry) {
+    try {
+      await api.launch(record.pkgname);
+    } catch (e) {
+      onError(String(e));
+    }
+  }
+
+  async function uninstall(record: InstalledEntry) {
     setBusy(record.pkgname);
     setLog([]);
     try {
@@ -108,7 +117,7 @@ export function Installed({
     }
   }
 
-  async function forget(record: InstallRecord) {
+  async function forget(record: InstalledEntry) {
     try {
       await api.deleteRecord(record.pkgname);
       reload();
@@ -290,31 +299,44 @@ export function Installed({
                             <span className="truncate">{record.deb_path}</span>
                           </div>
                         </td>
-                        <td className="whitespace-nowrap px-3.5 py-2.5 text-right">
-                          {installed ? (
-                            <Button
-                              variant="danger"
-                              size="sm"
-                              onClick={() => setTarget(record)}
-                              disabled={busy === record.pkgname}
-                            >
-                              {busy === record.pkgname ? (
-                                <IconRefresh size={13} className="animate-spin" />
-                              ) : (
-                                <IconTrash size={13} />
-                              )}
-                              {t("installed.uninstall")}
-                            </Button>
-                          ) : (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => void forget(record)}
-                              title={t("installed.forget")}
-                            >
-                              {t("installed.forget")}
-                            </Button>
-                          )}
+                        <td className="whitespace-nowrap px-3.5 py-2.5">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {installed && record.launcher ? (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => void open(record)}
+                                title={t("installed.openHint")}
+                              >
+                                <IconPlay size={12} />
+                                {t("installed.open")}
+                              </Button>
+                            ) : null}
+                            {installed ? (
+                              <Button
+                                variant="danger"
+                                size="sm"
+                                onClick={() => setTarget(record)}
+                                disabled={busy === record.pkgname}
+                              >
+                                {busy === record.pkgname ? (
+                                  <IconRefresh size={13} className="animate-spin" />
+                                ) : (
+                                  <IconTrash size={13} />
+                                )}
+                                {t("installed.uninstall")}
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => void forget(record)}
+                                title={t("installed.forget")}
+                              >
+                                {t("installed.forget")}
+                              </Button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );

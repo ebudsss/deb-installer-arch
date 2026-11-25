@@ -4,7 +4,8 @@
 
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, BufReader};
+use std::fs::File;
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -39,7 +40,7 @@ impl Diagnosis {
                 files.join(", ")
             ),
             Diagnosis::MissingDependencies(deps) => format!(
-                "Dependensi belum terpasang: {}. Pasang dulu paket Arch tersebut, lalu ulangi.",
+                "Dependensi berikut tidak bisa dipasang otomatis: {}. Pastikan repo pacman tersinkron (`pacman -Sy`), lalu ulangi.",
                 deps.join(", ")
             ),
             Diagnosis::DatabaseLocked => {
@@ -162,6 +163,75 @@ pub fn diagnose(log: &[String]) -> Diagnosis {
     Diagnosis::Unknown
 }
 
+/// Nama paket Arch yang aman dirangkai ke perintah shell. Nama datang dari
+/// `.PKGINFO` di dalam paket, sehingga harus divalidasi sebelum dipakai.
+fn is_valid_package_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '_' | '+' | '-'))
+}
+
+/// Mengutip satu argumen untuk shell POSIX.
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+/// Dependensi yang dideklarasikan `.PKGINFO` di dalam berkas paket.
+///
+/// Dibaca dari paketnya sendiri, bukan dari UI, agar pemasangan tetap benar
+/// walau berkas dibuka langsung dari cache.
+pub fn package_dependencies(package: &Path) -> Vec<String> {
+    let mut deps = Vec::new();
+    let Ok(text) = read_pkginfo(package) else {
+        return deps;
+    };
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("depend = ") {
+            let name = rest.trim();
+            if !name.is_empty() {
+                deps.push(name.to_string());
+            }
+        }
+    }
+    deps.sort();
+    deps.dedup();
+    deps
+}
+
+/// Membaca `.PKGINFO` dari paket `.pkg.tar.zst` / `.pkg.tar.xz`.
+fn read_pkginfo(package: &Path) -> Result<String> {
+    let file = File::open(package)
+        .map_err(|e| Error::Install(format!("tidak bisa membuka paket: {e}")))?;
+    let reader: Box<dyn Read> = if package.to_string_lossy().ends_with(".pkg.tar.xz") {
+        Box::new(xz2::read::XzDecoder::new(file))
+    } else {
+        Box::new(
+            zstd::stream::read::Decoder::new(file)
+                .map_err(|e| Error::Install(format!("paket bukan zstd yang valid: {e}")))?,
+        )
+    };
+    let mut archive = tar::Archive::new(reader);
+    let entries = archive
+        .entries()
+        .map_err(|e| Error::Install(format!("tidak bisa membaca arsip paket: {e}")))?;
+    for entry in entries {
+        let mut entry = entry.map_err(|e| Error::Install(format!("entri paket rusak: {e}")))?;
+        let is_pkginfo = entry
+            .path()
+            .map(|path| path.to_string_lossy().trim_start_matches("./") == ".PKGINFO")
+            .unwrap_or(false);
+        if is_pkginfo {
+            let mut text = String::new();
+            entry
+                .read_to_string(&mut text)
+                .map_err(|e| Error::Install(format!(".PKGINFO tidak terbaca: {e}")))?;
+            return Ok(text);
+        }
+    }
+    Ok(String::new())
+}
+
 /// Pemasang paket berbasis pacman.
 #[derive(Debug, Clone)]
 pub struct PacmanInstaller {
@@ -217,15 +287,81 @@ impl PacmanInstaller {
     }
 
     /// Memasang paket hasil konversi, meneruskan setiap baris log ke `on_line`.
+    ///
+    /// Dependensi yang belum terpenuhi dipasang lebih dulu sebagai dependensi
+    /// (`--asdeps`) dalam satu panggilan berhak istimewa, sehingga pengguna
+    /// hanya diautentikasi sekali dan `pacman -U` tidak gagal karena repo
+    /// belum lengkap.
     pub fn install(&self, package: &Path, on_line: &mut dyn FnMut(&str)) -> Result<InstallOutcome> {
         self.preflight(package)?;
-        let args = vec![
+
+        let deps = package_dependencies(package);
+        let missing: Vec<String> = self
+            .missing_dependencies(&deps)
+            .into_iter()
+            .filter(|name| is_valid_package_name(name))
+            .collect();
+
+        if missing.is_empty() {
+            return self.run(&self.install_args(package), on_line);
+        }
+
+        on_line(&format!(
+            "Dependensi belum terpasang: {}. Memasang otomatis.",
+            missing.join(", ")
+        ));
+        let names = missing
+            .iter()
+            .map(|name| shell_quote(name))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let script = format!(
+            "{} -S --asdeps --noconfirm --noprogressbar {names} && {}",
+            shell_quote(&self.pacman),
+            self.install_command(package)
+        );
+        self.run_script(&script, on_line)
+    }
+
+    fn install_args(&self, package: &Path) -> Vec<String> {
+        vec![
             "-U".to_string(),
             "--noconfirm".to_string(),
             "--noprogressbar".to_string(),
             package.to_string_lossy().to_string(),
-        ];
-        self.run(&args, on_line)
+        ]
+    }
+
+    /// Fragmen perintah `pacman -U` untuk dirangkai di dalam skrip shell.
+    fn install_command(&self, package: &Path) -> String {
+        format!(
+            "{} -U --noconfirm --noprogressbar {}",
+            shell_quote(&self.pacman),
+            shell_quote(&package.to_string_lossy())
+        )
+    }
+
+    /// Dependensi paket yang belum terpenuhi di sistem (`pacman -T`).
+    pub fn missing_dependencies(&self, deps: &[String]) -> Vec<String> {
+        let names: Vec<&String> = deps
+            .iter()
+            .filter(|name| is_valid_package_name(name))
+            .collect();
+        if names.is_empty() {
+            return Vec::new();
+        }
+        let mut args = vec!["-T".to_string()];
+        args.extend(names.iter().map(|name| (*name).clone()));
+        match Command::new(&self.pacman).args(&args).output() {
+            // Exit 0 berarti semua dependensi sudah terpenuhi.
+            Ok(out) if out.status.success() => Vec::new(),
+            Ok(out) => String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .map(|line| line.trim().to_string())
+                .filter(|line| !line.is_empty())
+                .collect(),
+            Err(_) => Vec::new(),
+        }
     }
 
     /// Menghapus paket beserta dependensi yang tidak lagi dipakai.
@@ -279,9 +415,36 @@ impl PacmanInstaller {
         };
 
         on_line(&format!("$ {}", self.describe(args)));
+        self.spawn_and_collect(&program, &full_args, on_line)
+    }
 
-        let mut child = Command::new(&program)
-            .args(&full_args)
+    /// Menjalankan perintah melalui shell, dengan eskalasi bila perlu.
+    fn run_script(&self, script: &str, on_line: &mut dyn FnMut(&str)) -> Result<InstallOutcome> {
+        let (program, args) = if self.use_polkit {
+            (
+                self.pkexec.clone(),
+                vec!["sh".to_string(), "-c".to_string(), script.to_string()],
+            )
+        } else {
+            ("sh".to_string(), vec!["-c".to_string(), script.to_string()])
+        };
+        let shown = if self.use_polkit {
+            format!("{} {}", self.pkexec, script)
+        } else {
+            script.to_string()
+        };
+        on_line(&format!("$ {shown}"));
+        self.spawn_and_collect(&program, &args, on_line)
+    }
+
+    fn spawn_and_collect(
+        &self,
+        program: &str,
+        full_args: &[String],
+        on_line: &mut dyn FnMut(&str),
+    ) -> Result<InstallOutcome> {
+        let mut child = Command::new(program)
+            .args(full_args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -360,6 +523,132 @@ mod tests {
 
     fn lines(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Membuat paket `.pkg.tar.zst` minimal dengan isi `.PKGINFO` tertentu.
+    fn make_package(dir: &Path, pkginfo: &str) -> std::path::PathBuf {
+        let path = dir.join("demo-deb-1.0-1-x86_64.pkg.tar.zst");
+        let file = std::fs::File::create(&path).unwrap();
+        let encoder = zstd::stream::write::Encoder::new(file, 3).unwrap();
+        let mut builder = tar::Builder::new(encoder.auto_finish());
+        let mut header = tar::Header::new_gnu();
+        header.set_size(pkginfo.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, ".PKGINFO", pkginfo.as_bytes())
+            .unwrap();
+        builder.finish().unwrap();
+        path
+    }
+
+    /// Skrip pacman palsu yang mencatat setiap panggilan ke `log`.
+    fn fake_pacman(dir: &Path, missing: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let log = dir.join("calls.log");
+        let script = dir.join("pacman");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\n\
+echo \"$@\" >> {log}\n\
+case \"$1\" in\n\
+  -T) echo \"{missing}\"; exit 1;;\n\
+  -S) echo \"memasang dependensi\"; exit 0;;\n\
+  -U) echo \"memasang paket\"; exit 0;;\n\
+esac\nexit 0\n",
+                log = log.display()
+            ),
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&script).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+        std::fs::set_permissions(&script, perms).unwrap();
+        (script, log)
+    }
+
+    #[test]
+    fn reads_dependencies_from_package() {
+        let dir = tempfile::tempdir().unwrap();
+        let package = make_package(
+            dir.path(),
+            "pkgname = demo-deb\ndepend = gtk3\ndepend = libfoo\n",
+        );
+        assert_eq!(
+            package_dependencies(&package),
+            vec!["gtk3".to_string(), "libfoo".to_string()]
+        );
+    }
+
+    #[test]
+    fn quotes_package_names_for_shell() {
+        assert!(is_valid_package_name("gtk3"));
+        assert!(is_valid_package_name("lib32-gtk3"));
+        assert!(!is_valid_package_name("gtk3; rm -rf /"));
+        assert!(!is_valid_package_name(""));
+        assert_eq!(shell_quote("a b"), "'a b'");
+        assert_eq!(shell_quote("it's"), "'it'\\''s'");
+    }
+
+    #[test]
+    fn installs_missing_dependencies_before_package() {
+        let dir = tempfile::tempdir().unwrap();
+        let package = make_package(dir.path(), "pkgname = demo-deb\ndepend = libmissing\n");
+        let (pacman, log) = fake_pacman(dir.path(), "libmissing");
+        let installer = PacmanInstaller {
+            pacman: pacman.to_string_lossy().to_string(),
+            use_polkit: false,
+            ..PacmanInstaller::default()
+        };
+
+        let mut lines = Vec::new();
+        let outcome = installer
+            .install(&package, &mut |line| lines.push(line.to_string()))
+            .unwrap();
+        assert!(outcome.success);
+
+        let calls = std::fs::read_to_string(&log).unwrap();
+        let calls: Vec<&str> = calls.lines().collect();
+        // Cek ketersediaan, pasang dependensi, baru pasang paketnya.
+        assert_eq!(calls[0], "-T libmissing");
+        assert_eq!(
+            calls[1],
+            "-S --asdeps --noconfirm --noprogressbar libmissing"
+        );
+        assert!(calls[2].starts_with("-U --noconfirm --noprogressbar "));
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("Dependensi belum terpasang: libmissing")));
+    }
+
+    #[test]
+    fn skips_dependency_step_when_nothing_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let package = make_package(dir.path(), "pkgname = demo-deb\ndepend = gtk3\n");
+        let log = dir.path().join("calls.log");
+        let script = dir.path().join("pacman");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\necho \"$@\" >> {}\n[ \"$1\" = \"-T\" ] && exit 0\nexit 0\n",
+                log.display()
+            ),
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&script).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+        std::fs::set_permissions(&script, perms).unwrap();
+
+        let installer = PacmanInstaller {
+            pacman: script.to_string_lossy().to_string(),
+            use_polkit: false,
+            ..PacmanInstaller::default()
+        };
+        installer.install(&package, &mut |_| {}).unwrap();
+
+        let calls = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(calls.lines().count(), 2);
+        assert!(calls.contains("-T gtk3"));
+        assert!(calls.contains("-U --noconfirm --noprogressbar"));
     }
 
     #[test]

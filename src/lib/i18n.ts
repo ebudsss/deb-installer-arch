@@ -170,6 +170,8 @@ const strings = {
   "installed.converted": ["Dikonversi", "Converted"],
   "installed.removed": ["Dihapus", "Removed"],
   "installed.uninstall": ["Hapus", "Uninstall"],
+  "installed.open": ["Buka", "Open"],
+  "installed.openHint": ["Buka aplikasi", "Open the app"],
   "installed.confirm": ["Yakin hapus?", "Confirm removal?"],
   "installed.yes": ["Ya, hapus", "Yes, remove"],
   "installed.cancel": ["Batal", "Cancel"],

@@ -50,7 +50,15 @@ in Settings → Language.
 - **Install via `pkexec pacman -U`** (polkit) with a live log and actionable failure
   diagnosis for file conflicts, missing dependencies, a locked database, or a
   missing polkit agent.
-- **Conversion history** with uninstall and forget actions.
+- **Dependencies install automatically**: anything the package needs that is
+  missing from the system is installed with `pacman -S --asdeps` first, in the same
+  privileged call, so you authenticate once. Removing the package with
+  `pacman -Rns` takes those dependencies with it.
+- **Conversion history** with open, uninstall, and forget actions. *Open* uses the
+  package's own `.desktop` entry (`gtk-launch`), falling back to a binary in
+  `/usr/bin` for packages without a menu entry. The list is reconciled against
+  `pacman -Qq` on every load, so packages installed or removed outside the app
+  show up correctly.
 - **Two languages** (English, Indonesian) and light/dark themes.
 
 ## Tar archive support
@@ -165,6 +173,8 @@ deb-installer-cli scripts   package.deb
 deb-installer-cli build     package.deb -o ./out
 deb-installer-cli install   ./out/package-deb-1.0-1-x86_64.pkg.tar.zst
 deb-installer-cli uninstall package-deb
+deb-installer-cli launch    package-deb          # open the app it installs
+deb-installer-cli launch    package-deb --print  # show what would be launched
 deb-installer-cli history
 ```
 

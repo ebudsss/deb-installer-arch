@@ -13,6 +13,7 @@ pub mod deb;
 pub mod deps;
 pub mod error;
 pub mod install;
+pub mod launch;
 pub mod mtree;
 pub mod normalize;
 pub mod pkgbuild;
@@ -29,5 +30,8 @@ pub use deps::{
 };
 pub use error::{Error, Result};
 pub use install::{Diagnosis, InstallOutcome, PacmanInstaller};
+pub use launch::{
+    discover as discover_launcher, launch as launch_application, LaunchKind, LaunchTarget,
+};
 pub use pkgbuild::{ArchVersion, BuildOptions, BuildResult, BuildStage, PackageBuilder};
 pub use scripts::{Finding, Risk, ScriptReport};

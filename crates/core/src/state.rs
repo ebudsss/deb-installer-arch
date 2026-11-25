@@ -87,10 +87,17 @@ impl History {
     pub fn reconcile(&mut self, installed: &std::collections::HashSet<String>, at: i64) -> bool {
         let mut changed = false;
         for record in &mut self.records {
-            if record.installed_at.is_some()
-                && record.uninstalled_at.is_none()
-                && !installed.contains(&record.pkgname)
-            {
+            let present = installed.contains(&record.pkgname);
+            let claims_installed = record.installed_at.is_some() && record.uninstalled_at.is_none();
+            if present && !claims_installed {
+                // Paket ada di pacman tetapi catatan belum mengetahuinya,
+                // misalnya setelah dipasang ulang di luar aplikasi.
+                record.installed_at = Some(record.installed_at.unwrap_or(at));
+                record.uninstalled_at = None;
+                changed = true;
+            } else if !present && claims_installed {
+                // Catatan mengklaim terpasang padahal pacman sudah tidak
+                // memilikinya.
                 record.uninstalled_at = Some(at);
                 changed = true;
             }

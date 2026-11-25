@@ -80,6 +80,13 @@ enum Command {
         #[arg(long)]
         no_polkit: bool,
     },
+    /// Buka aplikasi dari paket yang terpasang
+    Launch {
+        pkgname: String,
+        /// Hanya tampilkan cara membukanya, jangan jalankan
+        #[arg(long)]
+        print: bool,
+    },
     /// Tampilkan riwayat konversi/instalasi
     History {
         #[arg(long)]
@@ -116,8 +123,28 @@ fn run(cli: Cli) -> deb_installer_core::Result<()> {
         } => cmd_build(&file, &output, staging, no_install_script, level, json),
         Command::Install { package, no_polkit } => cmd_install(&package, no_polkit),
         Command::Uninstall { pkgname, no_polkit } => cmd_uninstall(&pkgname, no_polkit),
+        Command::Launch { pkgname, print } => cmd_launch(&pkgname, print),
         Command::History { json } => cmd_history(json),
     }
+}
+
+fn cmd_launch(pkgname: &str, print_only: bool) -> deb_installer_core::Result<()> {
+    let target = deb_installer_core::discover_launcher(pkgname).ok_or_else(|| {
+        deb_installer_core::Error::Install(format!(
+            "{pkgname} tidak punya aplikasi GUI atau binari yang bisa dibuka"
+        ))
+    })?;
+    let kind = match target.kind {
+        deb_installer_core::LaunchKind::Desktop => "desktop",
+        deb_installer_core::LaunchKind::Binary => "binari",
+    };
+    println!("{kind}: {} ({})", target.value, target.label);
+    if print_only {
+        return Ok(());
+    }
+    deb_installer_core::launch_application(&target)?;
+    println!("dibuka.");
+    Ok(())
 }
 
 /// Apakah path adalah arsip tar yang didukung (fitur tambahan).

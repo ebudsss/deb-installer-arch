@@ -328,6 +328,18 @@ impl SystemPacman {
     }
 }
 
+/// Mengambil nama paket dari keluaran `pacman -F --quiet`.
+///
+/// Baris berformat `repo/nama-paket` (kadang diikuti versi). Entri yang tidak
+/// mengandung garis miring dilewati karena bukan pemilik berkas yang sah.
+fn parse_file_owner(output: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        let (_, pkg) = line.trim().split_once('/')?;
+        let name = pkg.split_whitespace().next().unwrap_or("").trim();
+        (!name.is_empty()).then(|| name.to_string())
+    })
+}
+
 impl PackageQuery for SystemPacman {
     fn is_installed(&mut self, name: &str) -> bool {
         if let Some(v) = self.installed.get(name) {
@@ -355,13 +367,11 @@ impl PackageQuery for SystemPacman {
         }
         // `pacman -F` hanya bekerja bila database file sudah tersinkron
         // (`pacman -Fy`, butuh root). Bila belum, hasilnya kosong.
-        let found = Self::run("pacman", &["-F", "--quiet", soname]).and_then(|out| {
-            out.lines()
-                .next()
-                .and_then(|line| line.split('/').next())
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-        });
+        // `pacman -F --quiet` mencetak `repo/nama-paket` per baris. Nama
+        // paketnya ada SETELAH garis miring; mengambil bagian sebelumnya
+        // menghasilkan nama repo seperti `cachyos-extra-v3`.
+        let found =
+            Self::run("pacman", &["-F", "--quiet", soname]).and_then(|out| parse_file_owner(&out));
         self.files.insert(soname.to_string(), found.clone());
         found
     }

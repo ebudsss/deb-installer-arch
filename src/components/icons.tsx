@@ -145,6 +145,12 @@ export const IconArrowLeft = (p: IconProps) => (
   </Icon>
 );
 
+export const IconPlay = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M7 4.8v14.4l12-7.2z" />
+  </Icon>
+);
+
 export const IconLayers = (p: IconProps) => (
   <Icon {...p}>
     <path d="m12 3.4 8.2 4.2-8.2 4.2L3.8 7.6z" />

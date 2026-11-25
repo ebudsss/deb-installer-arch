@@ -6,10 +6,12 @@ use deb_installer_core::deps::{
     Alternative, DepMapper, DepResolution, DepStatus, MappingTable, SystemPacman,
 };
 use deb_installer_core::install::{InstallOutcome, PacmanInstaller};
+use deb_installer_core::launch::{discover as discover_launcher, launch as launch_application};
 use deb_installer_core::pkgbuild::{self, BuildOptions, BuildResult, BuildStage, PackageBuilder};
 use deb_installer_core::scripts::{self, Risk, ScriptReport};
 use deb_installer_core::security::SensitivePath;
 use deb_installer_core::state::{self, History, InstallRecord};
+use deb_installer_core::LaunchTarget as DebLaunchTarget;
 use deb_installer_core::{normalize, security};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -641,8 +643,17 @@ fn reconcile_history(history: &mut History) -> bool {
     history.reconcile(&installed, state::now_secs())
 }
 
+/// Satu baris daftar terpasang: catatan riwayat plus cara membukanya.
+#[derive(serde::Serialize)]
+struct InstalledEntry {
+    #[serde(flatten)]
+    record: InstallRecord,
+    /// `None` bila paket tidak punya aplikasi GUI maupun binari.
+    launcher: Option<DebLaunchTarget>,
+}
+
 #[tauri::command]
-fn list_installed() -> Result<Vec<InstallRecord>, String> {
+fn list_installed() -> Result<Vec<InstalledEntry>, String> {
     let mut history = History::load(&state::default_history_path()).map_err(err)?;
     if reconcile_history(&mut history) {
         if let Err(e) = history.save(&state::default_history_path()) {
@@ -651,7 +662,26 @@ fn list_installed() -> Result<Vec<InstallRecord>, String> {
     }
     let mut records = history.records.clone();
     records.sort_by_key(|record| std::cmp::Reverse(record.converted_at));
-    Ok(records)
+    Ok(records
+        .into_iter()
+        .map(|record| {
+            // Hanya paket yang benar-benar terpasang yang bisa dibuka.
+            let launcher = record
+                .is_installed()
+                .then(|| discover_launcher(&record.pkgname))
+                .flatten();
+            InstalledEntry { record, launcher }
+        })
+        .collect())
+}
+
+/// Membuka aplikasi dari paket yang terpasang.
+#[tauri::command]
+fn launch_package(pkgname: String) -> Result<(), String> {
+    let target = discover_launcher(&pkgname).ok_or_else(|| {
+        format!("{pkgname} tidak punya aplikasi GUI atau binari yang bisa dibuka")
+    })?;
+    launch_application(&target).map_err(err)
 }
 
 #[tauri::command]
@@ -719,6 +749,7 @@ pub fn run() {
             install_package,
             uninstall_package,
             list_installed,
+            launch_package,
             get_settings,
             save_settings,
             refresh_file_db,

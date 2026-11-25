@@ -146,6 +146,16 @@ export interface InstallRecord {
   uninstalled_at: number | null;
 }
 
+/** Cara membuka paket yang terpasang. */
+export interface LaunchTarget {
+  kind: "desktop" | "binary";
+  value: string;
+  label: string;
+}
+
+/** Catatan riwayat beserta peluncur yang terdeteksi. */
+export type InstalledEntry = InstallRecord & { launcher: LaunchTarget | null };
+
 export interface Settings {
   language: "id" | "en";
   theme: "system" | "light" | "dark";
@@ -167,7 +177,8 @@ export const api = {
     invoke<InstallOutcome>("install_package", { packagePath, keepPackage }),
   uninstall: (pkgname: string) =>
     invoke<InstallOutcome>("uninstall_package", { pkgname }),
-  listInstalled: () => invoke<InstallRecord[]>("list_installed"),
+  listInstalled: () => invoke<InstalledEntry[]>("list_installed"),
+  launch: (pkgname: string) => invoke<void>("launch_package", { pkgname }),
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<void>("save_settings", { settings }),
   refreshFileDb: () => invoke<boolean>("refresh_file_db"),
